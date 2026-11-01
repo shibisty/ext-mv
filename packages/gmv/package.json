@@ -1,0 +1,24 @@
+{
+  "name": "gmv",
+  "version": "0.1.0",
+  "description": "Game Model Viewer: ядро чтения игровых моделей с плагинами движков (X-Ray, Gamebryo, RenderWare, id Tech, Valve, Unreal, Cast, EA, CryEngine, HPL, assimp) и WebGL2-рендерер",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/types/index.d.ts", "import": "./dist/index.js" },
+    "./engines": { "types": "./dist/types/engines/index.d.ts", "import": "./dist/engines/index.js" },
+    "./engines/*": { "types": "./dist/types/engines/*/index.d.ts", "import": "./dist/engines/*/index.js" },
+    "./renderer": { "types": "./dist/types/renderer/index.d.ts", "import": "./dist/renderer/index.js" },
+    "./iife": "./dist/gmv.iife.js"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "vite build && vite build -c vite.iife.config.ts && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "optionalDependencies": {
+    "assimpjs": "0.0.10"
+  }
+}

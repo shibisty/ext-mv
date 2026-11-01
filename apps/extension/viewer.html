@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Game Model Viewer</title>
+<meta name="color-scheme" content="dark">
+<style>html,body{background:#1e2227}</style>
+<link rel="stylesheet" href="./src/viewer/viewer.css">
+</head>
+<body>
+<!-- стартовое окно: выбор игры или формата -->
+<div id="start">
+  <div class="start-box">
+    <button id="btnBack" hidden title="Вернуться к просмотру без смены игры (Esc)">Назад к просмотру ▸</button>
+    <h1>Game Model Viewer <small id="ver"></small></h1>
+    <p class="hint">Выберите игру или формат. Можно сразу перетащить в окно файлы модели или папку игры — игра определится сама.</p>
+    <input id="gameFilter" type="search" placeholder="Поиск игры или формата" autocomplete="off">
+    <div id="gameGrid"></div>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header id="top">
+    <button id="btnGame" class="game" title="Сменить игру или формат">◂ <span id="gameTitle"></span></button>
+    <div class="grp" role="group" aria-label="Инструмент">
+      <button id="toolCamera" class="seg on" title="Камера: ЛКМ — вращение, ПКМ / Shift — сдвиг, колесо — масштаб (C)">✥ Камера</button>
+      <button id="toolSelect" class="seg" title="Выбор объекта в сцене щелчком (V). Esc — снять выбор">⬚ Выбор</button>
+      <button id="toolRotate" class="seg" title="Поворот выбранного объекта сцены: тянуть ЛКМ влево-вправо (R)">↻ Поворот</button>
+      <span id="rotSteps" hidden><button id="btnRotL" title="Повернуть на 90° против часовой">⟲ 90°</button><button id="btnRotR" title="Повернуть на 90° по часовой">⟳ 90°</button></span>
+    </div>
+    <div class="grp" role="group" aria-label="Камера">
+      <button id="btnOrbit" class="seg on" title="Орбита вокруг модели">Орбита</button>
+      <button id="btnFly" class="seg" title="Полёт внутри уровня: W/A/S/D — движение, E/Пробел — вверх, Q/C — вниз, Shift — быстрее, Alt — медленнее; ЛКМ — обзор, ПКМ — сдвиг, колесо — скорость">Полёт</button>
+      <span id="lblFlySpeed" class="muted"></span>
+      <button id="btnCam" title="Показать модель целиком">⤢</button>
+    </div>
+    <div class="dd">
+      <button id="btnView" aria-haspopup="true" aria-expanded="false">Вид ▾</button>
+      <div id="viewMenu" class="menu" hidden>
+        <label><input type="checkbox" id="chkTex" checked> Текстуры</label>
+        <label><input type="checkbox" id="chkWire"> Каркас</label>
+        <label><input type="checkbox" id="chkSkeleton"> Скелет</label>
+        <label><input type="checkbox" id="chkGrid" checked> Сетка</label>
+        <label><input type="checkbox" id="chkAlpha"> Альфа-тест (вырезание)</label>
+        <label title="Карты нормалей из материалов модели или рядом с текстурой (_n, _nohq, __n_d, _normal…)"><input type="checkbox" id="chkNormals" checked> Карты нормалей</label>
+        <label title="Шероховатость, металличность, AO и блик из материалов игры: модель GGX с отражением неба"><input type="checkbox" id="chkPbr" checked> PBR (шероховатость, металличность)</label>
+        <label title="Зелёный канал: OpenGL (Y вверх) ↔ DirectX (Y вниз). По умолчанию — как принято в игре"><input type="checkbox" id="chkNormFlip"> Инвертировать Y нормалей</label>
+        <label id="lblZup"><input type="checkbox" id="chkZup"> Ось Z вверх (повернуть модель)</label>
+        <hr>
+        <label class="rng" title="Как в Normal Map Studio: XY нормали карты умножаются на силу">Рельеф <input type="range" id="rngNI" min="0" max="3" step="0.05" value="1"> <span id="lblNI">1.00</span></label>
+        <label class="rng" title="Убрать всё выше заданной высоты — заглянуть внутрь зданий и подземелий">Срез сверху <input type="range" id="rngClip" min="0" max="1000" value="1000"> <span id="lblClip">выкл.</span></label>
+        <label>Показ <select id="selNormView"><option value="0">освещение</option><option value="1">нормали цветом</option><option value="2">карта нормалей (касательные)</option><option value="3">поверхность PBR (R — AO, G — шероховатость, B — металл)</option></select></label>
+      </div>
+    </div>
+    <span class="spacer"></span>
+    <button id="btnInfo" aria-expanded="false" title="Сведения о модели">Сведения</button>
+    <button id="btnExport" class="primary" title="Выгрузить модель или уровень в формат другой игры или редактора">Экспорт…</button>
+  </header>
+
+  <aside id="left">
+    <div class="row wrap">
+      <button id="btnFolder" title="Папка игры или распакованных ресурсов">Папка игры…</button>
+      <button id="btnArch">Открыть архив…</button>
+    </div>
+    <div class="row wrap">
+      <button id="btnModel" class="primary">Модель…</button>
+      <button id="btnOmf">+ .omf</button>
+      <button id="btnTex" title="Файлы текстур">Текстуры…</button>
+      <button id="btnTexDir" title="Папка текстур">Папка текстур…</button>
+    </div>
+    <div id="fmtHint" class="hint"></div>
+    <h2>Ресурсы <span id="archInfo" class="muted"></span></h2>
+    <input id="archFilter" type="search" placeholder="Поиск по ресурсам (например: door)" autocomplete="off">
+    <select id="archList" size="2" aria-label="Модели в открытых архивах и папках"></select>
+    <div id="status" class="status" role="status">Откройте папку игры, архив или файл модели (или перетащите их в окно).</div>
+    <button id="btnDiag" hidden>Скопировать диагностику</button>
+  </aside>
+
+  <main>
+    <canvas id="gl"></canvas>
+    <div id="selInfo" class="sel" hidden></div>
+    <div id="drop">Отпустите файлы или папку</div>
+  </main>
+
+  <aside id="right">
+    <section class="pane" id="paneLayers">
+      <h2>Сцена <span id="layersInfo" class="muted"></span></h2>
+      <div id="layers" class="scroll" role="tree" aria-label="Слои сцены"></div>
+    </section>
+    <section class="pane" id="paneMeshes">
+      <h2>Меши и текстуры</h2>
+      <div id="meshList" class="scroll"></div>
+    </section>
+    <section class="pane" id="paneAnim">
+      <h2>Анимация</h2>
+      <select id="motionSel" size="2" aria-label="Анимации"></select>
+      <div class="row">
+        <button id="btnPlay">⏸</button>
+        <input id="rngTime" type="range" min="0" max="1000" value="0">
+        <span id="lblTime" class="muted">0.00 / 0.00</span>
+      </div>
+      <div class="row">
+        <label class="rng">Скорость <input id="rngSpeed" type="range" min="0.1" max="3" step="0.1" value="1"> <span id="lblSpeed">1.0×</span></label>
+        <label><input type="checkbox" id="chkLoop" checked> Цикл</label>
+      </div>
+      <label id="lblInv"><input type="checkbox" id="chkInvQuat"> Инвертировать вращение (подбирается автоматически)</label>
+    </section>
+  </aside>
+</div>
+
+<div id="infoPop" class="popover" hidden><div id="info" class="info">—</div></div>
+
+<dialog id="dlgExport" aria-labelledby="expTitle">
+  <form method="dialog" class="dlg">
+    <header><h2 id="expTitle">Экспорт</h2><span id="expSource" class="muted"></span><button value="close" class="x" title="Закрыть">✕</button></header>
+    <div class="dlg-body">
+      <div id="expTargets" class="targets" role="radiogroup" aria-label="Куда выгрузить"></div>
+      <div class="dlg-side">
+        <p id="expDesc" class="hint"></p>
+        <div id="expFields"></div>
+        <div id="expReport" class="info" hidden></div>
+      </div>
+    </div>
+    <footer><span id="expStatus" class="muted"></span><span class="spacer"></span><button value="close">Закрыть</button><button id="btnExpRun" class="primary" value="" type="button">Экспортировать</button></footer>
+  </form>
+</dialog>
+
+<input type="file" id="fileModel" hidden>
+<input type="file" id="fileArch" hidden multiple>
+<input type="file" id="fileFolder" hidden webkitdirectory multiple>
+<input type="file" id="fileOmf" hidden multiple>
+<input type="file" id="fileTex" hidden multiple accept=".dds,.tga,.png,.jpg,.jpeg,.bmp,.webp,.pcx,.vtf">
+<input type="file" id="fileTexDir" hidden webkitdirectory multiple>
+<input type="file" id="fileMeshTex" hidden accept=".dds,.tga,.png,.jpg,.jpeg,.bmp,.webp,.pcx,.vtf">
+<script type="module" src="./src/viewer/main.ts"></script>
+</body>
+</html>

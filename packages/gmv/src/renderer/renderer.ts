@@ -1,0 +1,543 @@
+// WebGL2-рендерер модели gmv: скининг в вершинном шейдере (матрицы костей в float-текстуре), сетка, каркас, скелет.
+import { computeTangents, type NormalPacking } from '../core/normals';
+import type { Bounds, DecodedImage, Mesh, Model, SkeletonRuntime } from '../core/types';
+import type { OrbitCamera } from './camera';
+import { FLIPZ, IDENT, mulCol, perspective, ZUP } from './mat4';
+
+const VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor; layout(location=2) in vec2 aUV;
+layout(location=3) in vec4 aBone; layout(location=4) in vec4 aWeight; layout(location=5) in vec4 aTan;
+uniform mat4 uProj, uMV, uModel; uniform sampler2D uBones; uniform bool uSkinned;
+out vec3 vN, vP; out vec4 vT; out vec2 vUV; out float vY;
+mat4 bm(float f){ int i=int(f+0.5); return mat4(texelFetch(uBones,ivec2(0,i),0),texelFetch(uBones,ivec2(1,i),0),texelFetch(uBones,ivec2(2,i),0),texelFetch(uBones,ivec2(3,i),0)); }
+void main(){
+  vec4 p=vec4(aPos,1.0); vec3 n=aNor, t=aTan.xyz;
+  if(uSkinned){ mat4 m=bm(aBone.x)*aWeight.x; if(aWeight.y!=0.0)m+=bm(aBone.y)*aWeight.y; if(aWeight.z!=0.0)m+=bm(aBone.z)*aWeight.z; if(aWeight.w!=0.0)m+=bm(aBone.w)*aWeight.w; p=m*p; n=mat3(m)*n; t=mat3(m)*t; }
+  vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vY=(uModel*p).y; gl_Position=uProj*q;
+}`;
+const FS = `#version 300 es
+precision highp float;
+in vec3 vN, vP; in vec4 vT; in vec2 vUV; in float vY; out vec4 o;
+// срез сверху: всё выше uClipY (мировая высота показа) не рисуется — чтобы заглянуть внутрь уровня
+uniform float uClipY;
+uniform sampler2D uTex, uNorm, uSurf; uniform bool uHasTex, uAlphaTest, uFlat, uHasNorm, uHasSurf; uniform vec3 uFlatColor, uBase; uniform float uFlatAlpha;
+// uNormPack: 0 — xyz в RGB, 1 — XY в RG (BC5), 2 — X в альфе, Y в зелёном (DXT5nm); uNormY: +1 OpenGL (Y вверх), -1 Direct3D; uMirror: -1 при отражённой сцене
+uniform int uNormPack, uView; uniform float uNormY, uMirror, uNI;
+vec3 tangentNormal(vec4 t){
+  vec3 n;
+  if(uNormPack==0) n=t.rgb*2.0-1.0;
+  else { vec2 xy=(uNormPack==1?t.rg:t.ag)*2.0-1.0; n=vec3(xy,sqrt(max(0.0,1.0-dot(xy,xy)))); }
+  n.y*=uNormY;
+  return normalize(n);
+}
+const float PI=3.14159265;
+// процедурное окружение для отражений (небо сверху, земля снизу), размывается по шероховатости
+vec3 envColor(vec3 R, float rough){
+  vec3 sky=mix(vec3(0.55,0.60,0.68),vec3(0.28,0.38,0.58),clamp(R.y,0.0,1.0));
+  vec3 gnd=mix(vec3(0.30,0.30,0.31),vec3(0.14,0.12,0.11),clamp(-R.y*3.0,0.0,1.0));
+  vec3 e=R.y>0.0?sky:gnd;
+  return mix(e,vec3(0.30,0.32,0.36),rough*rough);
+}
+// аппроксимация интеграла BRDF для окружения (Karis, UE4 mobile)
+vec3 envBRDF(vec3 F0, float rough, float NdV){
+  vec4 r=rough*vec4(-1.0,-0.0275,-0.572,0.022)+vec4(1.0,0.0425,1.04,-0.04);
+  float a004=min(r.x*r.x,exp2(-9.28*NdV))*r.x+r.y;
+  vec2 AB=vec2(-1.04,1.04)*a004+r.zw;
+  return F0*AB.x+AB.y;
+}
+void main(){
+  if(vY>uClipY) discard;
+  if(uFlat){ o=vec4(uFlatColor,uFlatAlpha); return; }
+  vec4 c=uHasTex?texture(uTex,vUV):vec4(uBase,1.0);
+  if(uAlphaTest&&c.a<0.5) discard;
+  // нормали моделей бывают развёрнуты как угодно (обход граней у игр разный, сцена может быть отражена):
+  // освещаем сторону, обращённую к камере
+  vec3 V=normalize(-vP), N=normalize(vN);
+  float side=dot(N,V)<0.0?-1.0:1.0;
+  vec3 Ng=N*side, Nw=Ng, nt=vec3(0.0,0.0,1.0);
+  if(uHasNorm){
+    vec3 T=vT.xyz-N*dot(N,vT.xyz);
+    if(dot(T,T)>1e-10){
+      T=normalize(T);
+      vec3 B=cross(N,T)*vT.w*uMirror;
+      // как в Normal Map Studio: сила рельефа масштабирует XY касательной нормали
+      nt=tangentNormal(texture(uNorm,vUV));
+      nt=normalize(vec3(nt.xy*uNI,max(nt.z,0.001)));
+      Nw=normalize(mat3(T,B,N)*nt)*side;
+    }
+  }
+  if(uView==1){ o=vec4(Nw*0.5+0.5,1.0); return; } // нормали (пространство камеры)
+  if(uView==2){ o=vec4(nt*0.5+0.5,1.0); return; } // карта нормалей (касательное пространство)
+  if(uView==3&&!uHasSurf){ o=vec4(0.0,0.6,0.0,1.0); return; } // поверхность: нет карты — AO 0, шероховатость 0.6, металл 0
+  vec3 L=normalize(vec3(0.4,0.6,1.0)), H=normalize(L+V);
+  vec3 alb=pow(c.rgb,vec3(2.2));
+  if(uHasSurf){
+    // PBR (metal/rough, GGX): R — AO, G — шероховатость, B — металличность, A — блик неметалла (0.5 = F0 0.04)
+    vec4 sf=texture(uSurf,vUV);
+    float ao=sf.r, rough=clamp(sf.g,0.045,1.0), metal=sf.b, a=rough*rough, a2=a*a;
+    if(uView==3){ o=vec4(sf.rgb,1.0); return; }
+    vec3 F0=mix(vec3(0.08*sf.a),alb,metal);
+    float NdL=max(dot(Nw,L),0.0), NdV=max(dot(Nw,V),1e-3), NdH=max(dot(Nw,H),0.0), VdH=max(dot(V,H),0.0);
+    float geo=smoothstep(0.0,0.15,dot(Ng,L));
+    float dd=NdH*NdH*(a2-1.0)+1.0, D=a2/(PI*dd*dd);
+    float k=(rough+1.0)*(rough+1.0)/8.0, G=(NdL/(NdL*(1.0-k)+k))*(NdV/(NdV*(1.0-k)+k));
+    vec3 F=F0+(1.0-F0)*pow(1.0-VdH,5.0);
+    vec3 spec=D*G*F/max(4.0*NdL*NdV,1e-4);
+    vec3 kd=(1.0-F)*(1.0-metal);
+    vec3 direct=(kd*alb/PI+spec)*vec3(1.0,0.97,0.92)*NdL*geo*PI*1.2;
+    vec3 amb=mix(vec3(0.05,0.05,0.06),vec3(0.20,0.22,0.26),Nw.y*0.5+0.5);
+    vec3 R=reflect(-V,Nw);
+    vec3 ambient=(alb*(1.0-metal)*amb+envColor(R,rough)*envBRDF(F0,rough,NdV))*ao;
+    o=vec4(pow(direct+ambient,vec3(1.0/2.2)),1.0);
+    return;
+  }
+  // освещение из Normal Map Studio: линейный цвет, полусферический фон, «геометрическая» тень, блик Блинна
+  float ndl=max(dot(Nw,L),0.0), geo=smoothstep(0.0,0.15,dot(Ng,L));
+  float sp=uHasNorm?pow(max(dot(Nw,H),0.0),32.0)*0.25*geo*step(0.0,ndl):0.0;
+  vec3 amb=mix(vec3(0.05,0.05,0.06),vec3(0.20,0.22,0.26),Nw.y*0.5+0.5);
+  vec3 col=alb*(amb+vec3(1.0,0.97,0.92)*ndl*geo*1.2)+vec3(sp);
+  o=vec4(pow(col,vec3(1.0/2.2)),1.0);
+}`;
+const LVS = `#version 300 es
+layout(location=0) in vec3 aPos; uniform mat4 uProj, uMV; void main(){ gl_Position=uProj*uMV*vec4(aPos,1.0); }`;
+const LFS = `#version 300 es
+precision mediump float; uniform vec4 uColor; out vec4 o; void main(){ o=uColor; }`;
+
+function program(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
+  const mk = (t: number, s: string) => {
+    const sh = gl.createShader(t)!;
+    gl.shaderSource(sh, s);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh) ?? 'shader');
+    return sh;
+  };
+  const p = gl.createProgram()!;
+  gl.attachShader(p, mk(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? 'program');
+  return p;
+}
+
+export interface DrawOptions {
+  tex: boolean; wire: boolean; skeleton: boolean; grid: boolean; alpha: boolean;
+  /** Карты нормалей (если найдены). */
+  normals?: boolean;
+  /** Инвертировать зелёный канал относительно соглашения игры (GL ↔ DX). */
+  normalFlipY?: boolean;
+  /** Отладка: 0/false — освещение, 1/true — нормали цветом, 2 — карта нормалей (касательное пространство), 3 — поверхность PBR (R AO, G шероховатость, B металл). */
+  normalView?: boolean | 0 | 1 | 2 | 3;
+  /** PBR (шероховатость, металличность, AO), если у меша есть поверхность. */
+  pbr?: boolean;
+  /** Сила рельефа карт нормалей (1 — как есть). */
+  normalStrength?: number;
+  /** Срез сверху: не рисовать выше этой высоты (координаты показа, Y вверх). */
+  clipY?: number;
+}
+
+/** Цвета сцены (для тем оформления). */
+export interface RendererTheme {
+  background: [number, number, number];
+  grid: [number, number, number, number];
+  skeleton: [number, number, number, number];
+  wire: [number, number, number];
+  base: [number, number, number];
+}
+export const DARK_THEME: RendererTheme = {
+  background: [0.12, 0.14, 0.17], grid: [0.35, 0.4, 0.45, 1], skeleton: [1, 0.85, 0.2, 1], wire: [0.9, 0.95, 1], base: [0.7, 0.72, 0.76],
+};
+export const LIGHT_THEME: RendererTheme = {
+  background: [0.93, 0.94, 0.96], grid: [0.7, 0.73, 0.78, 1], skeleton: [0.85, 0.45, 0.05, 1], wire: [0.15, 0.2, 0.3], base: [0.62, 0.64, 0.68],
+};
+
+interface GpuMesh {
+  count: number; data: Mesh; visible: boolean; tex: WebGLTexture | null; itype: number;
+  /** Индексы на GPU (скрытые экземпляры — вырожденные треугольники). */
+  idx: Uint16Array | Uint32Array;
+  norm: WebGLTexture | null; normPack: NormalPacking; surf: WebGLTexture | null;
+  bPos: WebGLBuffer; bNor: WebGLBuffer; bUV: WebGLBuffer; bBone: WebGLBuffer; bWt: WebGLBuffer; bTan: WebGLBuffer; bIdx: WebGLBuffer;
+  vao: WebGLVertexArrayObject; vaoW?: WebGLVertexArrayObject; bLine?: WebGLBuffer; lineCount?: number;
+}
+interface LineVao { vao: WebGLVertexArrayObject; buf: WebGLBuffer }
+
+export class Renderer {
+  readonly gl: WebGL2RenderingContext;
+  meshes: GpuMesh[] = [];
+  theme: RendererTheme = DARK_THEME;
+  bounds = { center: [0, 0, 0], radius: 1 };
+  private readonly p: WebGLProgram;
+  private readonly lp: WebGLProgram;
+  private readonly U: Record<string, WebGLUniformLocation | null>;
+  private readonly LU: Record<string, WebGLUniformLocation | null>;
+  private readonly boneTex: WebGLTexture;
+  private readonly gridVao: LineVao;
+  private readonly skelVao: LineVao;
+  private readonly aniso: EXT_texture_filter_anisotropic | null;
+  private boneCount = 0;
+  private gridN = 0;
+  private skelN = 0;
+  private flip: Float32Array = FLIPZ;
+  private flipOn = true;
+  private zUp = false;
+  private normalY = -1;
+  private yaw0 = Math.PI;
+  private rawBounds: Bounds = { min: [0, 0, 0], max: [1, 1, 1] };
+  private highlight: Array<{ mesh: number; iStart: number; iCount: number }> = [];
+  /** Матрицы последнего кадра: проекция × вид × модель (для выбора лучом). */
+  lastPVM: Float32Array | null = null;
+  get zUpOn(): boolean { return this.zUp; }
+  /** Точка модели в координатах показа (с учётом отражения Z и «Z вверх»). */
+  toView(x: number, y: number, z: number): number[] {
+    let p = this.zUp ? [x, z, -y] : [x, y, z];
+    if (this.flipOn) p = [p[0]!, p[1]!, -p[2]!];
+    return p;
+  }
+
+  constructor(readonly canvas: HTMLCanvasElement) {
+    const gl = canvas.getContext('webgl2', { antialias: true });
+    if (!gl) throw new Error('WebGL2 недоступен');
+    this.gl = gl;
+    this.p = program(gl, VS, FS);
+    this.lp = program(gl, LVS, LFS);
+    const u = (p: WebGLProgram, n: string) => gl.getUniformLocation(p, n);
+    this.U = { proj: u(this.p, 'uProj'), mv: u(this.p, 'uMV'), model: u(this.p, 'uModel'), clipY: u(this.p, 'uClipY'), bones: u(this.p, 'uBones'), skinned: u(this.p, 'uSkinned'), tex: u(this.p, 'uTex'),
+      hasTex: u(this.p, 'uHasTex'), alpha: u(this.p, 'uAlphaTest'), flat: u(this.p, 'uFlat'), flatColor: u(this.p, 'uFlatColor'), flatAlpha: u(this.p, 'uFlatAlpha'), base: u(this.p, 'uBase'),
+      norm: u(this.p, 'uNorm'), hasNorm: u(this.p, 'uHasNorm'), normPack: u(this.p, 'uNormPack'), normY: u(this.p, 'uNormY'), mirror: u(this.p, 'uMirror'), view: u(this.p, 'uView'), ni: u(this.p, 'uNI'), surf: u(this.p, 'uSurf'), hasSurf: u(this.p, 'uHasSurf') };
+    this.LU = { proj: u(this.lp, 'uProj'), mv: u(this.lp, 'uMV'), color: u(this.lp, 'uColor') };
+    this.boneTex = gl.createTexture()!;
+    this.gridVao = this.mkLineVao();
+    this.skelVao = this.mkLineVao();
+    this.aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+  }
+
+  private mkLineVao(): LineVao {
+    const gl = this.gl, vao = gl.createVertexArray()!, buf = gl.createBuffer()!;
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    return { vao, buf };
+  }
+  private buf(target: number, data: ArrayBufferView): WebGLBuffer {
+    const gl = this.gl, b = gl.createBuffer()!;
+    gl.bindBuffer(target, b);
+    gl.bufferData(target, data as BufferSource, gl.STATIC_DRAW);
+    return b;
+  }
+  private attribs(m: GpuMesh): void {
+    const gl = this.gl, sets: Array<[WebGLBuffer, number]> = [[m.bPos, 3], [m.bNor, 3], [m.bUV, 2], [m.bBone, 4], [m.bWt, 4], [m.bTan, 4]];
+    sets.forEach(([b, n], i) => { gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, n, gl.FLOAT, false, 0, 0); });
+  }
+
+  /** Освободить GPU-ресурсы текущей модели. */
+  clear(): void {
+    const gl = this.gl;
+    for (const m of this.meshes) {
+      gl.deleteVertexArray(m.vao);
+      if (m.vaoW) gl.deleteVertexArray(m.vaoW);
+      if (m.tex) gl.deleteTexture(m.tex);
+      if (m.norm) gl.deleteTexture(m.norm);
+      if (m.surf) gl.deleteTexture(m.surf);
+      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine]) if (b) gl.deleteBuffer(b);
+    }
+    this.meshes = [];
+    this.highlight = [];
+  }
+
+  /** Полностью освободить контекст (при уничтожении просмотрщика). */
+  dispose(): void {
+    const gl = this.gl;
+    this.clear();
+    gl.deleteTexture(this.boneTex);
+    for (const v of [this.gridVao, this.skelVao]) { gl.deleteVertexArray(v.vao); gl.deleteBuffer(v.buf); }
+    gl.deleteProgram(this.p);
+    gl.deleteProgram(this.lp);
+  }
+
+  setModel(model: Model): void {
+    const gl = this.gl;
+    this.clear();
+    for (const d of model.meshes) {
+      const bPos = this.buf(gl.ARRAY_BUFFER, d.pos), bNor = this.buf(gl.ARRAY_BUFFER, d.nor), bUV = this.buf(gl.ARRAY_BUFFER, d.uv);
+      const bBone = this.buf(gl.ARRAY_BUFFER, d.bone), bWt = this.buf(gl.ARRAY_BUFFER, d.weight), bTan = this.buf(gl.ARRAY_BUFFER, computeTangents(d));
+      const vao = gl.createVertexArray()!;
+      const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: true, tex: null, norm: null, normPack: 'rgb', surf: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
+        bPos, bNor, bUV, bBone, bWt, bTan, vao, bIdx: null as unknown as WebGLBuffer };
+      gl.bindVertexArray(vao);
+      this.attribs(m);
+      m.bIdx = this.buf(gl.ELEMENT_ARRAY_BUFFER, m.idx);
+      this.meshes.push(m);
+    }
+    gl.bindVertexArray(null);
+    this.boneCount = model.skeleton ? model.skeleton.n : 0;
+    this.skelN = 0;
+    this.flipOn = !!model.flipZ;
+    this.flip = this.flipOn ? FLIPZ : IDENT;
+    this.yaw0 = model.cameraYaw ?? (this.flipOn ? Math.PI : 0);
+    this.zUp = false;
+    this.normalY = model.normalY === 'gl' ? 1 : -1;
+    this.rawBounds = model.bounds;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.boneTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, Math.max(1, this.boneCount), 0, gl.RGBA, gl.FLOAT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.buildGrid();
+    this.computeBounds();
+  }
+
+  /** Покадровая вершинная анимация (MD2/MD3/MDL): перезалить позиции и нормали. */
+  updateGeometry(): void {
+    const gl = this.gl;
+    gl.bindVertexArray(null);
+    for (const m of this.meshes) {
+      if (!m.data.dynamic) continue;
+      gl.bindBuffer(gl.ARRAY_BUFFER, m.bPos);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, m.data.pos);
+      gl.bindBuffer(gl.ARRAY_BUFFER, m.bNor);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, m.data.nor);
+    }
+  }
+
+  setZUp(v: boolean): void { this.zUp = v; this.buildGrid(); }
+  /** Диапазон высот модели в координатах показа (Y вверх) — для среза сверху. */
+  heightRange(): [number, number] {
+    const { min, max } = this.rawBounds;
+    return this.zUp ? [min[2]!, max[2]!] : [min[1]!, max[1]!];
+  }
+  setMeshVisible(i: number, v: boolean): void { const m = this.meshes[i]; if (m) m.visible = v; }
+  isMeshVisible(i: number): boolean { return this.meshes[i]?.visible ?? false; }
+  /** Индексы меша на GPU (со скрытыми экземплярами — вырожденные). */
+  gpuIndices(i: number): Uint16Array | Uint32Array | null { return this.meshes[i]?.idx ?? null; }
+
+  /** Скрыть или показать часть меша (экземпляр объекта): треугольники становятся вырожденными, смещения не меняются. */
+  setRangeVisible(i: number, iStart: number, iCount: number, visible: boolean): void {
+    const m = this.meshes[i];
+    if (!m || iCount <= 0) return;
+    const end = Math.min(iStart + iCount, m.idx.length);
+    if (visible) for (let k = iStart; k < end; k++) m.idx[k] = m.data.indices[k]!;
+    else { const v = m.data.indices[iStart]!; m.idx.fill(v, iStart, end); }
+    this.uploadIndices(m, iStart, end);
+  }
+  /** Перезалить вершины (позиции, нормали) и индексы части меша после изменения данных (поворот экземпляра). */
+  updateRange(i: number, vStart: number, vCount: number, iStart: number, iCount: number, hidden = false): void {
+    const gl = this.gl, m = this.meshes[i];
+    if (!m) return;
+    gl.bindVertexArray(null);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.bPos);
+    gl.bufferSubData(gl.ARRAY_BUFFER, vStart * 12, m.data.pos.subarray(vStart * 3, (vStart + vCount) * 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.bNor);
+    gl.bufferSubData(gl.ARRAY_BUFFER, vStart * 12, m.data.nor.subarray(vStart * 3, (vStart + vCount) * 3));
+    if (!hidden) { for (let k = iStart; k < iStart + iCount; k++) m.idx[k] = m.data.indices[k]!; this.uploadIndices(m, iStart, iStart + iCount); }
+  }
+  private uploadIndices(m: GpuMesh, from: number, to: number): void {
+    const gl = this.gl, bpe = m.idx.BYTES_PER_ELEMENT;
+    gl.bindVertexArray(m.vao);
+    gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, from * bpe, m.idx.subarray(from, to));
+    gl.bindVertexArray(null);
+    // каркас пересобирается из idx при следующем показе
+    if (m.vaoW) { gl.deleteVertexArray(m.vaoW); m.vaoW = undefined; }
+    if (m.bLine) { gl.deleteBuffer(m.bLine); m.bLine = undefined; }
+  }
+  /** Подсветить части мешей (выбранный объект); пустой список — снять подсветку. */
+  setHighlight(list: Array<{ mesh: number; iStart: number; iCount: number }>): void { this.highlight = list; }
+
+  private computeBounds(): void {
+    const { min, max } = this.rawBounds;
+    let c = [(min[0]! + max[0]!) / 2, (min[1]! + max[1]!) / 2, (min[2]! + max[2]!) / 2];
+    if (this.zUp) c = [c[0]!, c[2]!, -c[1]!];
+    if (this.flipOn) c[2] = -c[2]!;
+    this.bounds = { center: c, radius: Math.hypot(max[0]! - min[0]!, max[1]! - min[1]!, max[2]! - min[2]!) / 2 || 1 };
+  }
+  private buildGrid(): void {
+    const gl = this.gl, { min, max } = this.rawBounds;
+    const lo = this.zUp ? [min[0]!, min[2]!, -max[1]!] : min, hi = this.zUp ? [max[0]!, max[2]!, -min[1]!] : max;
+    const half = Math.max(hi[0]! - lo[0]!, hi[2]! - lo[2]!, (hi[1]! - lo[1]!) * 0.6) || 1, g: number[] = [];
+    for (let i = -10; i <= 10; i++) { const v = (i * half) / 10; g.push(-half, lo[1]!, v, half, lo[1]!, v, v, lo[1]!, -half, v, lo[1]!, half); }
+    gl.bindVertexArray(this.gridVao.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.gridVao.buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(g), gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    this.gridN = g.length / 3;
+  }
+  /** Поставить камеру так, чтобы модель целиком попадала в кадр. */
+  fit(camera: OrbitCamera): void {
+    this.computeBounds();
+    const b = this.bounds;
+    camera.reset();
+    camera.yaw = this.yaw0;
+    camera.target = [...b.center];
+    camera.dist = b.radius * 2.6;
+  }
+
+  setTexture(i: number, img: DecodedImage | null): void {
+    const gl = this.gl, m = this.meshes[i];
+    if (!m) return;
+    if (m.tex) { gl.deleteTexture(m.tex); m.tex = null; }
+    if (img) m.tex = this.upload(img);
+  }
+  /** Карта нормалей меша (packing — как упакована нормаль, см. analyzeNormalMap). */
+  setNormalMap(i: number, img: DecodedImage | null, packing: NormalPacking = 'rgb'): void {
+    const gl = this.gl, m = this.meshes[i];
+    if (!m) return;
+    if (m.norm) { gl.deleteTexture(m.norm); m.norm = null; }
+    m.normPack = packing;
+    if (img) m.norm = this.upload(img);
+  }
+  /** Сведённая PBR-карта меша (R AO, G шероховатость, B металличность, A блик), см. composeSurface. */
+  setSurface(i: number, img: DecodedImage | null): void {
+    const gl = this.gl, m = this.meshes[i];
+    if (!m) return;
+    if (m.surf) { gl.deleteTexture(m.surf); m.surf = null; }
+    if (img) m.surf = this.upload(img);
+  }
+  private upload(img: DecodedImage): WebGLTexture {
+    const gl = this.gl, t = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (img.rgba) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, img.width, img.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img.rgba);
+    else if (img.bitmap) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img.bitmap);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    if (this.aniso) gl.texParameterf(gl.TEXTURE_2D, this.aniso.TEXTURE_MAX_ANISOTROPY_EXT, 8);
+    return t;
+  }
+
+  updatePose(skel: SkeletonRuntime | null): void {
+    const gl = this.gl, n = skel ? skel.n : 0;
+    if (!skel || !n) return;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.boneTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, n, gl.RGBA, gl.FLOAT, skel.skin);
+    const l: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const p = skel.parent[i]!;
+      if (p < 0) continue;
+      const a = skel.worldV[p]!, b = skel.worldV[i]!;
+      l.push(a[12]!, a[13]!, a[14]!, b[12]!, b[13]!, b[14]!);
+    }
+    gl.bindVertexArray(this.skelVao.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.skelVao.buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(l), gl.DYNAMIC_DRAW);
+    gl.bindVertexArray(null);
+    this.skelN = l.length / 3;
+  }
+
+  draw(cam: OrbitCamera, o: DrawOptions): void {
+    const gl = this.gl, c = this.canvas, dpr = globalThis.devicePixelRatio || 1, th = this.theme;
+    const w = Math.max(1, Math.floor(c.clientWidth * dpr)), h = Math.max(1, Math.floor(c.clientHeight * dpr));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(th.background[0], th.background[1], th.background[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const r = this.bounds.radius;
+    // полёт: глаз внутри сцены — ближняя плоскость маленькая, дальняя — по размеру сцены
+    const proj = cam.mode === 'fly' ? perspective(1.0, w / h, Math.max(0.01, Math.min(0.1, r * 0.001)), r * 4 + 100) : perspective(0.8, w / h, Math.max(r * 0.01, cam.dist * 0.01), r * 100 + cam.dist * 2);
+    const model = this.zUp ? mulCol(this.flip, ZUP) : this.flip;
+    const mvG = mulCol(cam.view(), this.flip), mv = this.zUp ? mulCol(mvG, ZUP) : mvG;
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(this.p);
+    gl.uniformMatrix4fv(this.U.proj!, false, proj);
+    gl.uniformMatrix4fv(this.U.mv!, false, mv);
+    gl.uniformMatrix4fv(this.U.model!, false, model);
+    this.lastPVM = mulCol(proj, mv);
+    gl.uniform1f(this.U.clipY!, o.clipY ?? 1e30);
+    gl.uniform1i(this.U.bones!, 1);
+    gl.uniform1i(this.U.tex!, 0);
+    gl.uniform1i(this.U.norm!, 2);
+    gl.uniform1i(this.U.surf!, 3);
+    gl.uniform1f(this.U.normY!, this.normalY * (o.normalFlipY ? -1 : 1));
+    gl.uniform1f(this.U.mirror!, this.flipOn ? -1 : 1);
+    gl.uniform1i(this.U.view!, typeof o.normalView === 'number' ? o.normalView : o.normalView ? 1 : 0);
+    gl.uniform1f(this.U.ni!, o.normalStrength ?? 1);
+    gl.uniform1i(this.U.skinned!, this.boneCount > 0 ? 1 : 0);
+    gl.uniform1i(this.U.alpha!, o.alpha ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.boneTex);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(1, 1);
+    gl.uniform1i(this.U.flat!, 0);
+    gl.uniform1f(this.U.flatAlpha!, 1);
+    for (const m of this.meshes) {
+      if (!m.visible) continue;
+      gl.activeTexture(gl.TEXTURE0);
+      const has = o.tex && m.tex;
+      gl.bindTexture(gl.TEXTURE_2D, has ? m.tex : null);
+      gl.uniform1i(this.U.hasTex!, has ? 1 : 0);
+      gl.uniform3fv(this.U.base!, m.data.color ?? th.base);
+      const nm = o.normals !== false && m.norm;
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, nm ? m.norm : null);
+      gl.uniform1i(this.U.hasNorm!, nm ? 1 : 0);
+      gl.uniform1i(this.U.normPack!, m.normPack === 'rg' ? 1 : m.normPack === 'ag' ? 2 : 0);
+      const sf = o.pbr !== false && m.surf;
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, sf ? m.surf : null);
+      gl.uniform1i(this.U.hasSurf!, sf ? 1 : 0);
+      gl.bindVertexArray(m.vao);
+      gl.drawElements(gl.TRIANGLES, m.count, m.itype, 0);
+    }
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+    if (o.wire) {
+      gl.uniform1i(this.U.flat!, 1);
+      gl.uniform3f(this.U.flatColor!, th.wire[0], th.wire[1], th.wire[2]);
+      for (const m of this.meshes) {
+        if (!m.visible) continue;
+        if (!m.vaoW) {
+          const d = m.idx, e = d instanceof Uint32Array ? new Uint32Array(d.length * 2) : new Uint16Array(d.length * 2);
+          for (let t = 0; t + 2 < d.length; t += 3) e.set([d[t]!, d[t + 1]!, d[t + 1]!, d[t + 2]!, d[t + 2]!, d[t]!], t * 2);
+          m.vaoW = gl.createVertexArray()!;
+          gl.bindVertexArray(m.vaoW);
+          this.attribs(m);
+          m.bLine = this.buf(gl.ELEMENT_ARRAY_BUFFER, e);
+          m.lineCount = e.length;
+        }
+        gl.bindVertexArray(m.vaoW);
+        gl.drawElements(gl.LINES, m.lineCount!, m.itype, 0);
+      }
+    }
+    if (this.highlight.length) {
+      gl.uniform1i(this.U.flat!, 1);
+      gl.uniform3f(this.U.flatColor!, 1.0, 0.62, 0.15);
+      gl.uniform1f(this.U.flatAlpha!, 0.45);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthFunc(gl.LEQUAL);
+      for (const h of this.highlight) {
+        const m = this.meshes[h.mesh];
+        if (!m?.visible) continue;
+        gl.bindVertexArray(m.vao);
+        gl.drawElements(gl.TRIANGLES, h.iCount, m.itype, h.iStart * m.idx.BYTES_PER_ELEMENT);
+      }
+      gl.depthFunc(gl.LESS);
+      gl.disable(gl.BLEND);
+    }
+    gl.uniform1f(this.U.flatAlpha!, 1);
+    gl.useProgram(this.lp);
+    gl.uniformMatrix4fv(this.LU.proj!, false, proj);
+    gl.uniformMatrix4fv(this.LU.mv!, false, mvG);
+    if (o.grid && this.gridN) {
+      gl.uniform4fv(this.LU.color!, th.grid);
+      gl.bindVertexArray(this.gridVao.vao);
+      gl.drawArrays(gl.LINES, 0, this.gridN);
+    }
+    if (o.skeleton && this.skelN) {
+      gl.uniformMatrix4fv(this.LU.mv!, false, mv);
+      gl.disable(gl.DEPTH_TEST);
+      gl.uniform4fv(this.LU.color!, th.skeleton);
+      gl.bindVertexArray(this.skelVao.vao);
+      gl.drawArrays(gl.LINES, 0, this.skelN);
+    }
+    gl.bindVertexArray(null);
+  }
+}

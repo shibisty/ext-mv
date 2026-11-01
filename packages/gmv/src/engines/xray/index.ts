@@ -1,0 +1,101 @@
+// X-Ray Engine (S.T.A.L.K.E.R.): OGF v4 + анимации OMF, архивы .db/.xdb.
+import { ascii, u32le } from '../../core/binary';
+import { defineEngine, type GamePreset } from '../../core/plugin';
+
+const DB_EXTS = ['db', 'xdb', ...'0123456789'.split('').flatMap((d) => ['db' + d, 'xdb' + d]), 'dba', 'dbb', 'dbc', 'dbd'];
+const ui: GamePreset['ui'] = { motionLabel: '+ .omf', invertQuat: true, archives: true, archiveExts: DB_EXTS, archiveLabel: 'Открыть .db…' };
+const game = (id: string, title: string, hint: string): GamePreset => ({ id, group: 'Игры', title, engine: 'xray', formats: ['xray-ogf', 'xray-object', 'xray-level', 'xray-scene'], hint, ui, status: 'beta', markers: ['gamedata', 'fsgame.ltx'] });
+
+export const xrayEngine = defineEngine({
+  id: 'xray',
+  title: 'X-Ray Engine',
+  formats: [
+    {
+      id: 'xray-ogf',
+      title: 'X-Ray OGF',
+      engine: 'xray',
+      extensions: ['ogf'],
+      motionExtensions: ['omf'],
+      status: 'beta',
+      // первый чанк — OGF_HEADER (id 1), затем байт версии; иначе не уверены, но и не исключаем
+      sniff: (h) => (u32le(h, 0) === 1 ? (h[8] === 4 ? 1 : 0.6) : 0.2),
+      load: async (main) => (await import('./load')).loadOgf(main),
+    },
+    {
+      id: 'xray-object',
+      title: 'X-Ray SDK .object',
+      engine: 'xray',
+      extensions: ['object'],
+      status: 'beta',
+      sniff: (h) => (u32le(h, 0) === 0x7777 ? 1 : 0),
+      load: async (main) => (await import('./load')).loadObject(main),
+    },
+    {
+      id: 'xray-level',
+      title: 'X-Ray: скомпилированный уровень (level + level.geom)',
+      engine: 'xray',
+      extensions: [],
+      pathPattern: /(^|\/)levels\/[^/]+\/level$/,
+      status: 'beta',
+      // первый чанк — заголовок уровня (id 1, 4 байта: версия и качество)
+      sniff: (h) => (u32le(h, 0) === 1 && u32le(h, 4) === 4 && u32le(h, 8) !== 16 ? 0.9 : 0), // 16 — версия уровня Metro 2033 (4A)
+      load: async (main, ctx) => (await import('./level')).loadLevel(main, ctx),
+    },
+    {
+      id: 'xray-scene',
+      title: 'X-Ray SDK: уровень (.level + scene_object.part)',
+      engine: 'xray',
+      extensions: ['level'],
+      status: 'beta',
+      // SDK 0.7 (ЗП) сохраняет сцену как ini; бинарные .level старых SDK пока не читаются
+      sniff: (h) => (/^\s*\[(build_params|camera|guid|level_options|level_tag|version)\]/.test(ascii(h, 0, Math.min(h.length, 64))) ? 1 : 0),
+      load: async (main, ctx) => (await import('./scene')).loadSceneLevel(main, ctx),
+    },
+  ],
+  archives: [
+    {
+      id: 'xray-db',
+      title: 'X-Ray .db / .xdb (Чистое небо, Зов Припяти)',
+      engine: 'xray',
+      extensions: DB_EXTS,
+      // ЧН/ЗП начинаются с текстового чанка [header] (id 0x29A), ТЧ и моды — с чанка данных (id 0)
+      sniff: (h) => (u32le(h, 0) === 0x29a ? 1 : u32le(h, 0) === 0 ? 0.5 : 0),
+      open: async (file) => (await import('./db')).openXrayDb(file),
+    },
+  ],
+  exporters: [
+    {
+      id: 'xray-sdk',
+      title: 'S.T.A.L.K.E.R.: исходники X-Ray SDK 0.7',
+      target: 'xray',
+      description: 'Для LevelEditor и ActorEditor (Зов Припяти, SDK 0.7): геометрия .object (большие карты режутся на ячейки), сцена .level + scene_object.part, текстуры DDS + .thm — одним ZIP. Свет, секторы, AI-сетку и сборку xrLC делаете в SDK.',
+      from: ['metro', 'xray'],
+      fields: [
+        { id: 'name', label: 'Имя уровня', type: 'text', hint: 'Латиница, цифры, «_»: rawdata/objects/gmv/<имя>, rawdata/levels/<имя>.level', default: (_m, base) => base.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'level' },
+        { id: 'cell', label: 'Ячейка, м', type: 'number', min: 0, step: 8, placeholder: 'авто', hint: 'Разбиение геометрии на объекты (0 — одним объектом; для карт удобно 32–64)' },
+        { id: 'scale', label: 'Масштаб', type: 'number', min: 0, step: 0.01, default: 1, hint: 'Сколько метров в одной единице модели (X-Ray: 1 единица = 1 м)' },
+        { id: 'instances', label: 'Объекты уровня — ссылками', type: 'checkbox', default: true, hint: 'Каждая модель объекта одним .object в props, в сцене — ссылки с позами. Снимите, чтобы влить объекты в геометрию ячеек', when: (m) => !!m.instances },
+      ],
+      run: async (model, v, ctx) => {
+        const { exportXraySdk } = await import('./export');
+        const name = String(v.name || ctx.baseName);
+        const r = await exportXraySdk(model, {
+          name, cell: v.cell === '' || v.cell === undefined ? undefined : +v.cell, scale: +v.scale || 1, hidden: ctx.hidden,
+          texture: (i) => ctx.texture(i), xraySource: ctx.sourceEngine === 'xray', instances: v.instances !== false,
+        });
+        return { ...r, name: `${name}_xray_sdk` };
+      },
+    },
+  ],
+  games: [
+    game('stalker-soc', 'S.T.A.L.K.E.R.: Тень Чернобыля', 'OGF v4. Анимации — внутри модели или во внешнем .omf. Архивы ТЧ (gamedata.db*) зашифрованы и не открываются — укажите распакованную папку gamedata; .xdb модов открываются.'),
+    game('stalker-cs', 'S.T.A.L.K.E.R.: Чистое небо', 'OGF v4. Откройте resources.db0–db2 (модели и текстуры) и patches/xpatch_*.db или папку gamedata.'),
+    game('stalker-cop', 'S.T.A.L.K.E.R.: Зов Припяти', 'OGF v4; возможны 3/4-весовые вершины (менее проверено). Архивы .db — как у Чистого неба.'),
+  ],
+});
+
+/** Выгрузка модели/уровня в исходники X-Ray SDK (.object, .level, текстуры); модуль подгружается по требованию. */
+export async function exportXraySdk(...args: Parameters<typeof import('./export').exportXraySdk>): ReturnType<typeof import('./export').exportXraySdk> {
+  return (await import('./export')).exportXraySdk(...args);
+}
+export type { XrayExportOptions, XrayExportResult, TextureForExport } from './export';

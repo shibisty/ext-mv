@@ -1,0 +1,144 @@
+// Синтетика 4A (Metro 2033): упаковщик QuickLZ уровня 3 (литералы + короткие совпадения), индекс .vfi + .vfs, уровень.
+import { Bin } from './bin';
+
+/** QuickLZ, уровень 3: совпадения длины 3 со смещением 1..63 (1-байтовый код), остальное — литералы. */
+export function quicklzCompress(data: Uint8Array): Uint8Array {
+  const items: Array<{ m: boolean; bytes: number[] }> = [], last = data.length - 11;
+  for (let i = 0; i < data.length;) {
+    let off = 0;
+    if (i < last) for (let o = 1; o < 64 && o <= i; o++) if (data[i - o] === data[i] && data[i - o + 1] === data[i + 1] && data[i - o + 2] === data[i + 2]) { off = o; break; }
+    if (off) { items.push({ m: true, bytes: [off << 2] }); i += 3; } else items.push({ m: false, bytes: [data[i++]!] });
+  }
+  const body: number[] = [];
+  for (let k = 0; k < items.length; k += 31) {
+    const group = items.slice(k, k + 31);
+    let cw = 0x80000000;
+    group.forEach((it, b) => { if (it.m) cw |= 1 << b; });
+    body.push(cw & 0xff, (cw >>> 8) & 0xff, (cw >>> 16) & 0xff, cw >>> 24);
+    for (const it of group) body.push(...it.bytes);
+  }
+  const out = new Bin().u8(0x7f).u32(9 + body.length).u32(data.length).bytes(body);
+  return out.toU8();
+}
+
+/** Индекс .vfi (имя архива data.vfs0) и файл данных: files — путь (с «content\\») -> содержимое; сжатые — QuickLZ. */
+export function makeVfi(files: Array<{ path: string; data: Uint8Array; compress?: boolean }>): { vfi: Uint8Array; vfs: Uint8Array } {
+  const vfs = new Bin(), recs = new Bin();
+  vfs.u32(0).u32(0); // как в игре: данные с 8-го байта
+  files.forEach((f, i) => {
+    const stored = f.compress ? quicklzCompress(f.data) : f.data, key = 0x5a + i, off = vfs.pos;
+    vfs.bytes(stored);
+    recs.u8(key).u8(1).u8(2).u8(3).u32(off).u32(f.data.length).u32(stored.length).u32(f.path.length + 1);
+    for (let k = 0; k < f.path.length; k++) recs.u8(f.path.charCodeAt(k) ^ key);
+    recs.u8(0);
+  });
+  const name = new Bin().cstr('data.vfs0').u32(vfs.pos), arc = new Bin();
+  arc.u32(0).u32(name.length).bytes(name.toU8()).u32(1).u32(recs.length).bytes(recs.toU8()).u32(2).u32(4).u32(0);
+  const vfi = new Bin().u32(0xffffffff).u32(20).u32(0).zeros(16).u32(0).u32(arc.length).bytes(arc.toU8());
+  return { vfi: vfi.toU8(), vfs: vfs.toU8() };
+}
+
+/** Уровень 4A: квадрат 2×2 в плоскости XZ (нормаль +Y) с одной текстурой. */
+export function makeMetroLevel(): { level: Uint8Array; geom: Uint8Array } {
+  const chunk = (b: Bin, id: number, body: Bin) => { b.u32(id).u32(body.length).bytes(body.toU8()); };
+  const level = new Bin();
+  chunk(level, 1, new Bin().u32(16));
+  chunk(level, 2, new Bin().u16(1).cstr('geometry\\default').cstr('concrete\\floor_01').cstr('materials\\concrete').u32(0));
+  const vis = new Bin(), v0 = new Bin();
+  chunk(v0, 0x15, new Bin().u32(3).u32(0).u32(4).u32(0).u32(6));
+  chunk(v0, 1, new Bin().u16(7).u16(0).zeros(60));
+  chunk(vis, 0, v0);
+  chunk(level, 3, vis);
+  const vb = new Bin();
+  // (b − a) × (c − a) = +Y для обхода 0,2,1 / 0,3,2 в левой системе
+  for (const [x, z, u, v] of [[0, 0, 0, 0], [2, 0, 2048, 0], [2, 2, 2048, 2048], [0, 2, 0, 2048]]) vb.f32s(x!, 0, z!).u8(127).u8(255).u8(127).u8(0).u32(0).u32(0).i16(u!).i16(v!).u32(0);
+  const geom = new Bin();
+  chunk(geom, 1, new Bin().u32(16));
+  chunk(geom, 9, vb);
+  chunk(geom, 10, new Bin().u16(0).u16(2).u16(1).u16(0).u16(3).u16(2));
+  return { level: level.toU8(), geom: geom.toU8() };
+}
+
+const chunkOf = (b: Bin, id: number, body: Bin | Uint8Array) => { const u = body instanceof Bin ? body.toU8() : body; b.u32(id).u32(u.length).bytes(u); return b; };
+
+/** Поле бинарного конфига 4A: [имя, тип, значение]; значение секции/массива — вложенные поля. */
+export type CfgSpec = [string, string, unknown];
+
+/** Бинарный конфиг 4A (тип 5): данные + таблица строк. Массив: count и секции rec_NNNN. */
+export function makeMetroConfig(fields: CfgSpec[]): Uint8Array {
+  const strings: string[] = [], idx = (s: string) => { let i = strings.indexOf(s); if (i < 0) { i = strings.length; strings.push(s); } return i; };
+  const crc = (s: string) => { let c = ~0; for (let i = 0; i < s.length; i++) { c ^= s.charCodeAt(i); for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return ~c >>> 0; };
+  // имена заранее в таблицу, чтобы crc секций (крупные числа) не совпали с индексами
+  const section = (name: string, list: CfgSpec[]): Bin => { const b = new Bin().u8(5).u32(idx(name)); writeFields(b, list); return b; };
+  const writeFields = (b: Bin, list: CfgSpec[]) => {
+    for (const [name, type, v] of list) {
+      if (type === 'section') { const s = section(name, v as CfgSpec[]); b.u32(Math.max(crc(name), 0x10000)).u32(s.length).bytes(s.toU8()); continue; }
+      b.u32(idx(name)).u32(idx(type));
+      if (type === 'array') { const s = section(name, v as CfgSpec[]); b.u32(Math.max(crc(name), 0x10000)).u32(s.length).bytes(s.toU8()); continue; }
+      const base = type.split(',').pop()!.trim();
+      if (v === null) continue; // подсказка
+      if (base === 'stringz') b.u32(idx(v as string));
+      else if (base === 'u8' || base === 'bool' || base === 'bool8') b.u8(v as number);
+      else if (base === 'u16' || base === 'uobject_link') b.u16(v as number);
+      else if (base === 'u32') b.u32(v as number);
+      else if (base === 'fp32') b.f32(v as number);
+      else if (base === 'matrix' || base === 'vec3f') b.f32s(...(v as number[]));
+      else throw new Error('makeMetroConfig: тип ' + type);
+    }
+  };
+  const data = new Bin(); writeFields(data, fields);
+  const st = new Bin().u32(strings.length); for (const s of strings) st.cstr(s);
+  const out = new Bin().u8(5); chunkOf(out, 1, data); chunkOf(out, 2, st);
+  return out.toU8();
+}
+
+/** level.bin: «levl», размер, QuickLZ. */
+export const packLevelBin = (cfg: Uint8Array) => new Bin().ascii('levl').u32(cfg.length).bytes(quicklzCompress(cfg)).toU8();
+
+export const IDENT = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+/** Объект level.bin с моделью и позой (матрица по строкам, перенос в последней строке). */
+export function metroEntity(name: string, cls: string, visual: string, pose: number[], parent = 0xffff): CfgSpec {
+  return [name, 'section', [
+    ['version', 'u16', 16], ['class', 'stringz', cls], ['static_data_key', 'stringz', ''], ['id', 'u16', 1], ['parent_id', 'u16', parent],
+    ['att_bone_id', 'locator_str', null], ['att_bone_id', 'stringz', ''], ['att_offset', 'pose, matrix', IDENT],
+    ['oflags', 'bool8', 0], ['', 'pose, matrix', pose], ['name', 'name', null], ['name', 'stringz', name],
+    ['visual', 'ref_model', null], ['visual', 'stringz', visual], ['backlight_ref', 'entity_link, uobject_link', 0xffff], ['dao_val', 'fp32', 1],
+  ]];
+}
+
+/** Статическая .model: один меш — треугольник в плоскости XY. */
+export function makeStaticModel(texture = 'props\\box'): Uint8Array {
+  const vb = new Bin().u32(2).u32(3);
+  for (const [x, y, u, v] of [[0, 0, 0, 0], [1, 0, 1, 0], [0, 1, 0, 1]]) vb.f32s(x!, y!, 0).u8(127).u8(127).u8(0).u8(0).u32(0).u32(0).f32s(u!, v!);
+  const mesh = new Bin();
+  chunkOf(mesh, 1, new Bin().u16(7).u16(0xffff).zeros(60));
+  chunkOf(mesh, 2, new Bin().cstr(texture).cstr('geometry\\default').cstr('materials\\wood'));
+  chunkOf(mesh, 3, vb);
+  chunkOf(mesh, 4, new Bin().u32(3).u16(0).u16(1).u16(2));
+  const meshes = chunkOf(new Bin(), 0, mesh);
+  return chunkOf(new Bin(), 9, meshes).toU8();
+}
+
+/** Скиновая модель: .model (скелет + имя меша), .mesh (две вершины-кости), .skeleton (корень и потомок). */
+export function makeSkinnedModel(): { model: Uint8Array; mesh: Uint8Array; skeleton: Uint8Array } {
+  const model = new Bin();
+  chunkOf(model, 1, new Bin().u16(8).u16(3).zeros(60));
+  chunkOf(model, 0x14, new Bin().cstr('dynamic\\test\\rig'));
+  chunkOf(model, 0x10, new Bin().u32(2).cstr('dynamic\\test\\body').cstr(''));
+  // кости в файле по алфавиту: «a_child» (родитель «root») раньше «root»
+  const sk = new Bin().u32(0x1234).u16(2);
+  sk.cstr('a_child').cstr('root').f32s(0, Math.PI / 2, 0).f32s(1, 0, 0).u16(0);
+  sk.cstr('root').cstr('').f32s(0, 0, 0).f32s(0, 1, 0).u16(0);
+  const skeleton = chunkOf(chunkOf(new Bin(), 1, new Bin().u32(1)), 0x0d, sk).toU8();
+  // таблица костей меша: [1 (root), 0 (a_child)]; в вершине номер × 3
+  const vb = new Bin().u8(2).u8(1).u8(0).zeros(2 * 60).u32(3);
+  for (const [x, y, z, b] of [[0, 2720, 0, 0], [2720, 2720, 0, 3], [0, 5440, 0, 0]]) vb.i16(x!).i16(y!).i16(z!).i16(1).u8(127).u8(255).u8(127).u8(0).u32(0).u32(0).u8(b!).u8(0).u8(0).u8(0).u8(255).u8(0).u8(0).u8(0).i16(1024).i16(2048);
+  const m = new Bin();
+  chunkOf(m, 1, new Bin().u16(7).u16(5).zeros(60));
+  chunkOf(m, 2, new Bin().cstr('act\\body').cstr('geometry\\skin').cstr('materials\\flesh'));
+  chunkOf(m, 5, vb);
+  chunkOf(m, 4, new Bin().u32(3).u16(0).u16(1).u16(2));
+  const mesh = chunkOf(new Bin(), 9, chunkOf(new Bin(), 0, m)).toU8();
+  return { model: model.toU8(), mesh, skeleton };
+}

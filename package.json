@@ -1,0 +1,37 @@
+{
+  "name": "ext-mv",
+  "private": true,
+  "version": "12.0.0",
+  "description": "Game Model Viewer: библиотека gmv (ядро + движки + WebGL-рендерер) и браузерное расширение для Chrome/Firefox",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build": "npm run build -w gmv && npm run build -w gmv-extension",
+    "build:lib": "npm run build -w gmv",
+    "build:ext": "npm run build -w gmv-extension",
+    "dev": "npm run dev -w gmv-extension",
+    "typecheck": "tsc -p packages/gmv/tsconfig.json --noEmit && tsc -p apps/extension/tsconfig.json --noEmit && tsc -p tools/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "npm run test:e2e -w gmv-extension",
+    "lint:firefox": "npm run lint:firefox -w gmv-extension",
+    "check": "npm run typecheck && npm test && npm run build && npm run lint:firefox",
+    "dev:firefox": "npm run dev -w gmv-extension -- firefox",
+    "smoke": "vite-node tools/smoke.ts --",
+    "peek": "vite-node tools/peek.ts --"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.0",
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.0",
+    "vitest": "^3.2.4",
+    "vite-node": "^3.2.4"
+  }
+}
