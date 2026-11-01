@@ -236,6 +236,11 @@ describe('расширение в Chromium', () => {
     await expect.poll(() => page.locator('#selInfo').isVisible()).toBe(true);
     expect(await page.locator('#layers .tn.cur').count()).toBe(1);
     expect(await page.locator('#meshList .mesh.cur').count()).toBe(1);
+    // выбор не должен сдвигать раскладку (раньше scrollIntoView прокручивал всю страницу)
+    expect(await page.evaluate(() => ['html', 'body', '#app', '#right', '#left'].map((s) => { const e = document.querySelector(s)!; return e.scrollLeft + e.scrollTop; }))).toEqual([0, 0, 0, 0, 0]);
+    expect((await page.locator('#top').boundingBox())!.x).toBe(0);
+    // содержимое правой панели не шире самой панели
+    expect(await page.evaluate(() => [...document.querySelectorAll('#right, #right .pane')].every((e) => e.scrollWidth <= e.clientWidth + 1))).toBe(true);
     await page.screenshot({ path: resolve(__dirname, '../dist/e2e-select.png') });
     // «Двигать»: у обычного меша (не объекта сцены) — подсказка, что двигаются только объекты
     await page.locator('#toolMove').click();

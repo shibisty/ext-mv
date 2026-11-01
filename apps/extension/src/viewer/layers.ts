@@ -83,6 +83,14 @@ export function createLayers(box: HTMLElement, h: LayersHandlers): LayersView {
     return r;
   };
 
+  // Прокрутить только список слоёв: scrollIntoView двигает и все родительские блоки (вплоть до всей страницы).
+  const scrollToRow = (r: HTMLElement) => {
+    const b = box.getBoundingClientRect(), q = r.getBoundingClientRect();
+    if (q.top < b.top) box.scrollTop += q.top - b.top;
+    else if (q.bottom > b.bottom) box.scrollTop += q.bottom - b.bottom;
+    box.scrollLeft = 0;
+  };
+
   const toggle = (n: SceneNode) => { if (open.has(n.id)) open.delete(n.id); else open.add(n.id); render(); };
 
   const render = () => {
@@ -136,7 +144,7 @@ export function createLayers(box: HTMLElement, h: LayersHandlers): LayersView {
       }
       if (changed) render();
       const r = rows.get(id);
-      if (r) { r.classList.add('cur'); r.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+      if (r) { r.classList.add('cur'); scrollToRow(r); }
     },
     syncLeaf(id) {
       const n = byId.get(id);
