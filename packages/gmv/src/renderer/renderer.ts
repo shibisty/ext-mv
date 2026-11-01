@@ -7,18 +7,20 @@ import { FLIPZ, IDENT, mulCol, perspective, ZUP } from './mat4';
 const VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor; layout(location=2) in vec2 aUV;
-layout(location=3) in vec4 aBone; layout(location=4) in vec4 aWeight; layout(location=5) in vec4 aTan;
+layout(location=3) in vec4 aBone; layout(location=4) in vec4 aWeight; layout(location=5) in vec4 aTan; layout(location=6) in vec2 aUV2;
 uniform mat4 uProj, uMV, uModel; uniform sampler2D uBones; uniform bool uSkinned;
-out vec3 vN, vP; out vec4 vT; out vec2 vUV; out float vY;
+out vec3 vN, vP; out vec4 vT; out vec2 vUV, vUV2; out float vY;
 mat4 bm(float f){ int i=int(f+0.5); return mat4(texelFetch(uBones,ivec2(0,i),0),texelFetch(uBones,ivec2(1,i),0),texelFetch(uBones,ivec2(2,i),0),texelFetch(uBones,ivec2(3,i),0)); }
 void main(){
   vec4 p=vec4(aPos,1.0); vec3 n=aNor, t=aTan.xyz;
   if(uSkinned){ mat4 m=bm(aBone.x)*aWeight.x; if(aWeight.y!=0.0)m+=bm(aBone.y)*aWeight.y; if(aWeight.z!=0.0)m+=bm(aBone.z)*aWeight.z; if(aWeight.w!=0.0)m+=bm(aBone.w)*aWeight.w; p=m*p; n=mat3(m)*n; t=mat3(m)*t; }
-  vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vY=(uModel*p).y; gl_Position=uProj*q;
+  vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vUV2=aUV2; vY=(uModel*p).y; gl_Position=uProj*q;
 }`;
 const FS = `#version 300 es
 precision highp float;
-in vec3 vN, vP; in vec4 vT; in vec2 vUV; in float vY; out vec4 o;
+in vec3 vN, vP; in vec4 vT; in vec2 vUV, vUV2; in float vY; out vec4 o;
+// карта освещения уровня (яркость в R) по второму набору UV
+uniform sampler2D uLm; uniform bool uHasLm; uniform float uLmK;
 // срез сверху: всё выше uClipY (мировая высота показа) не рисуется — чтобы заглянуть внутрь уровня
 uniform float uClipY;
 uniform sampler2D uTex, uNorm, uSurf; uniform bool uHasTex, uAlphaTest, uFlat, uHasNorm, uHasSurf; uniform vec3 uFlatColor, uBase; uniform float uFlatAlpha;
@@ -89,6 +91,7 @@ void main(){
     vec3 amb=mix(vec3(0.05,0.05,0.06),vec3(0.20,0.22,0.26),Nw.y*0.5+0.5);
     vec3 R=reflect(-V,Nw);
     vec3 ambient=(alb*(1.0-metal)*amb+envColor(R,rough)*envBRDF(F0,rough,NdV))*ao;
+    if(uHasLm){ float lm=texture(uLm,vUV2).r*uLmK; direct*=lm*0.5; ambient=ambient*0.25+alb*(1.0-metal)*lm*ao; }
     o=vec4(pow(direct+ambient,vec3(1.0/2.2)),1.0);
     return;
   }
@@ -97,6 +100,7 @@ void main(){
   float sp=uHasNorm?pow(max(dot(Nw,H),0.0),32.0)*0.25*geo*step(0.0,ndl):0.0;
   vec3 amb=mix(vec3(0.05,0.05,0.06),vec3(0.20,0.22,0.26),Nw.y*0.5+0.5);
   vec3 col=alb*(amb+vec3(1.0,0.97,0.92)*ndl*geo*1.2)+vec3(sp);
+  if(uHasLm){ float lm=texture(uLm,vUV2).r*uLmK; col=alb*(lm*(0.75+0.25*ndl*geo)+amb*0.15)+vec3(sp)*lm; }
   o=vec4(pow(col,vec3(1.0/2.2)),1.0);
 }`;
 const LVS = `#version 300 es
@@ -128,6 +132,10 @@ export interface DrawOptions {
   normalFlipY?: boolean;
   /** Отладка: 0/false — освещение, 1/true — нормали цветом, 2 — карта нормалей (касательное пространство), 3 — поверхность PBR (R AO, G шероховатость, B металл). */
   normalView?: boolean | 0 | 1 | 2 | 3;
+  /** Запечённое освещение уровня (если есть карта). По умолчанию включено. */
+  lightmap?: boolean;
+  /** Яркость карты освещения (множитель к масштабу модели). */
+  lightmapScale?: number;
   /** PBR (шероховатость, металличность, AO), если у меша есть поверхность. */
   pbr?: boolean;
   /** Сила рельефа карт нормалей (1 — как есть). */
@@ -156,7 +164,7 @@ interface GpuMesh {
   /** Индексы на GPU (скрытые экземпляры — вырожденные треугольники). */
   idx: Uint16Array | Uint32Array;
   norm: WebGLTexture | null; normPack: NormalPacking; surf: WebGLTexture | null;
-  bPos: WebGLBuffer; bNor: WebGLBuffer; bUV: WebGLBuffer; bBone: WebGLBuffer; bWt: WebGLBuffer; bTan: WebGLBuffer; bIdx: WebGLBuffer;
+  bPos: WebGLBuffer; bNor: WebGLBuffer; bUV: WebGLBuffer; bBone: WebGLBuffer; bWt: WebGLBuffer; bTan: WebGLBuffer; bIdx: WebGLBuffer; bUV2: WebGLBuffer;
   vao: WebGLVertexArrayObject; vaoW?: WebGLVertexArrayObject; bLine?: WebGLBuffer; lineCount?: number;
 }
 interface LineVao { vao: WebGLVertexArrayObject; buf: WebGLBuffer }
@@ -184,6 +192,8 @@ export class Renderer {
   private yaw0 = Math.PI;
   private rawBounds: Bounds = { min: [0, 0, 0], max: [1, 1, 1] };
   private highlight: Array<{ mesh: number; iStart: number; iCount: number }> = [];
+  private lmTex: WebGLTexture | null = null;
+  private lmScale = 1;
   /** Матрицы последнего кадра: проекция × вид × модель (для выбора лучом). */
   lastPVM: Float32Array | null = null;
   get zUpOn(): boolean { return this.zUp; }
@@ -202,7 +212,7 @@ export class Renderer {
     this.lp = program(gl, LVS, LFS);
     const u = (p: WebGLProgram, n: string) => gl.getUniformLocation(p, n);
     this.U = { proj: u(this.p, 'uProj'), mv: u(this.p, 'uMV'), model: u(this.p, 'uModel'), clipY: u(this.p, 'uClipY'), bones: u(this.p, 'uBones'), skinned: u(this.p, 'uSkinned'), tex: u(this.p, 'uTex'),
-      hasTex: u(this.p, 'uHasTex'), alpha: u(this.p, 'uAlphaTest'), flat: u(this.p, 'uFlat'), flatColor: u(this.p, 'uFlatColor'), flatAlpha: u(this.p, 'uFlatAlpha'), base: u(this.p, 'uBase'),
+      hasTex: u(this.p, 'uHasTex'), alpha: u(this.p, 'uAlphaTest'), flat: u(this.p, 'uFlat'), flatColor: u(this.p, 'uFlatColor'), flatAlpha: u(this.p, 'uFlatAlpha'), lm: u(this.p, 'uLm'), hasLm: u(this.p, 'uHasLm'), lmK: u(this.p, 'uLmK'), base: u(this.p, 'uBase'),
       norm: u(this.p, 'uNorm'), hasNorm: u(this.p, 'uHasNorm'), normPack: u(this.p, 'uNormPack'), normY: u(this.p, 'uNormY'), mirror: u(this.p, 'uMirror'), view: u(this.p, 'uView'), ni: u(this.p, 'uNI'), surf: u(this.p, 'uSurf'), hasSurf: u(this.p, 'uHasSurf') };
     this.LU = { proj: u(this.lp, 'uProj'), mv: u(this.lp, 'uMV'), color: u(this.lp, 'uColor') };
     this.boneTex = gl.createTexture()!;
@@ -226,7 +236,7 @@ export class Renderer {
     return b;
   }
   private attribs(m: GpuMesh): void {
-    const gl = this.gl, sets: Array<[WebGLBuffer, number]> = [[m.bPos, 3], [m.bNor, 3], [m.bUV, 2], [m.bBone, 4], [m.bWt, 4], [m.bTan, 4]];
+    const gl = this.gl, sets: Array<[WebGLBuffer, number]> = [[m.bPos, 3], [m.bNor, 3], [m.bUV, 2], [m.bBone, 4], [m.bWt, 4], [m.bTan, 4], [m.bUV2, 2]];
     sets.forEach(([b, n], i) => { gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, n, gl.FLOAT, false, 0, 0); });
   }
 
@@ -239,7 +249,7 @@ export class Renderer {
       if (m.tex) gl.deleteTexture(m.tex);
       if (m.norm) gl.deleteTexture(m.norm);
       if (m.surf) gl.deleteTexture(m.surf);
-      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine]) if (b) gl.deleteBuffer(b);
+      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine, m.bUV2]) if (b) gl.deleteBuffer(b);
     }
     this.meshes = [];
     this.highlight = [];
@@ -261,9 +271,10 @@ export class Renderer {
     for (const d of model.meshes) {
       const bPos = this.buf(gl.ARRAY_BUFFER, d.pos), bNor = this.buf(gl.ARRAY_BUFFER, d.nor), bUV = this.buf(gl.ARRAY_BUFFER, d.uv);
       const bBone = this.buf(gl.ARRAY_BUFFER, d.bone), bWt = this.buf(gl.ARRAY_BUFFER, d.weight), bTan = this.buf(gl.ARRAY_BUFFER, computeTangents(d));
+      const bUV2 = this.buf(gl.ARRAY_BUFFER, d.uv2 ?? new Float32Array(d.vertexCount * 2));
       const vao = gl.createVertexArray()!;
-      const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: true, tex: null, norm: null, normPack: 'rgb', surf: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
-        bPos, bNor, bUV, bBone, bWt, bTan, vao, bIdx: null as unknown as WebGLBuffer };
+      const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
+        bPos, bNor, bUV, bBone, bWt, bTan, bUV2, vao, bIdx: null as unknown as WebGLBuffer };
       gl.bindVertexArray(vao);
       this.attribs(m);
       m.bIdx = this.buf(gl.ELEMENT_ARRAY_BUFFER, m.idx);
@@ -285,9 +296,30 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.setLightmap(model.lightmap ?? null);
     this.buildGrid();
     this.computeBounds();
   }
+
+  /** Карта освещения уровня: яркость 1 байт на пиксель (R8) с mip-уровнями. */
+  setLightmap(lm: { width: number; height: number; data: Uint8Array; scale?: number } | null): void {
+    const gl = this.gl;
+    if (this.lmTex) { gl.deleteTexture(this.lmTex); this.lmTex = null; }
+    if (!lm) return;
+    const t = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, lm.width, lm.height, 0, gl.RED, gl.UNSIGNED_BYTE, lm.data);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.lmTex = t;
+    this.lmScale = lm.scale ?? 1;
+  }
+  get hasLightmap(): boolean { return !!this.lmTex; }
 
   /** Покадровая вершинная анимация (MD2/MD3/MDL): перезалить позиции и нормали. */
   updateGeometry(): void {
@@ -461,7 +493,10 @@ export class Renderer {
     gl.uniform1i(this.U.view!, typeof o.normalView === 'number' ? o.normalView : o.normalView ? 1 : 0);
     gl.uniform1f(this.U.ni!, o.normalStrength ?? 1);
     gl.uniform1i(this.U.skinned!, this.boneCount > 0 ? 1 : 0);
-    gl.uniform1i(this.U.alpha!, o.alpha ? 1 : 0);
+    gl.uniform1i(this.U.lm!, 4);
+    gl.uniform1f(this.U.lmK!, this.lmScale * (o.lightmapScale ?? 1));
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.lmTex);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.boneTex);
     gl.enable(gl.POLYGON_OFFSET_FILL);
@@ -484,6 +519,8 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, sf ? m.surf : null);
       gl.uniform1i(this.U.hasSurf!, sf ? 1 : 0);
+      gl.uniform1i(this.U.alpha!, o.alpha || m.data.alphaTest ? 1 : 0);
+      gl.uniform1i(this.U.hasLm!, this.lmTex && m.data.uv2 && o.lightmap !== false ? 1 : 0);
       gl.bindVertexArray(m.vao);
       gl.drawElements(gl.TRIANGLES, m.count, m.itype, 0);
     }

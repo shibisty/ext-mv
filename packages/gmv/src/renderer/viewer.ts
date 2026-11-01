@@ -7,7 +7,7 @@ import { pickRay, type RayHit } from '../core/scene';
 import { invert } from './mat4';
 
 /** Инструмент мыши: camera — только камера; select — щелчок выбирает объект; rotate — щелчок выбирает, перетаскивание поворачивает выбранное. */
-export type ViewerTool = 'camera' | 'select' | 'rotate';
+export type ViewerTool = 'camera' | 'select' | 'rotate' | 'move';
 
 export interface PlaybackState {
   motion: Motion | null;
@@ -29,7 +29,7 @@ export interface ModelViewerOptions {
   onEnded?(): void;
   /** Щелчок по холсту в режимах select/rotate: попадание (или null — мимо). */
   onPick?(hit: RayHit | null, e: PointerEvent): void;
-  /** Перетаскивание левой кнопкой в режиме rotate: true — обработано (камера не двигается). */
+  /** Перетаскивание левой кнопкой в режимах rotate/move: true — обработано (камера не двигается). */
   onToolDrag?(dx: number, dy: number, e: PointerEvent): boolean;
 }
 
@@ -190,7 +190,7 @@ export class ModelViewer {
       if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) start.moved = true;
       if (!start?.moved) return;
       const left = (e.buttons & 1) !== 0 && !e.shiftKey;
-      if (left && this.tool === 'rotate' && this.opts.onToolDrag?.(dx, dy, e)) return;
+      if (left && (this.tool === 'rotate' || this.tool === 'move') && this.opts.onToolDrag?.(dx, dy, e)) return;
       if (e.buttons & 2 || e.shiftKey || e.buttons & 4) this.camera.pan(dx, dy); else this.camera.rotate(dx, dy);
     });
     on('wheel', (e) => { e.preventDefault(); this.camera.zoom(Math.exp(e.deltaY * 0.001)); }, { passive: false });

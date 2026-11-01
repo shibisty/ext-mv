@@ -1,4 +1,5 @@
 // Сцена модели для интерфейса: дерево слоёв, видимость и поворот экземпляров, выбор треугольника лучом.
+import { tr } from './i18n';
 import type { InstancePlacement, Model } from './types';
 
 export interface SceneNode {
@@ -21,21 +22,21 @@ const tris = (model: Model, i: number) => Math.floor(model.meshes[i]!.indices.le
  */
 export function sceneTree(model: Model): SceneNode[] {
   const inst = model.instances, instMeshes = new Set(inst?.meshes ?? []);
-  const meshNode = (i: number): SceneNode => ({ id: `m${i}`, name: model.meshes[i]!.name || `меш ${i}`, kind: 'mesh', mesh: i, note: `${tris(model, i)} тр.` });
+  const meshNode = (i: number): SceneNode => ({ id: `m${i}`, name: model.meshes[i]!.name || tr('scene.mesh', { i }), kind: 'mesh', mesh: i, note: tr('scene.tris', { n: tris(model, i) }) });
   const plain = model.meshes.map((_, i) => i).filter((i) => !instMeshes.has(i));
-  if (!inst?.placements.length) return [{ id: 'model', name: 'Модель', kind: 'group', note: `${plain.length} меш.`, children: plain.map(meshNode) }];
+  if (!inst?.placements.length) return [{ id: 'model', name: tr('scene.model'), kind: 'group', note: tr('scene.meshes', { n: plain.length }), children: plain.map(meshNode) }];
   const groups = new Map<string, number[]>();
-  inst.placements.forEach((p, i) => { const g = p.group || 'объекты'; (groups.get(g) ?? groups.set(g, []).get(g)!).push(i); });
+  inst.placements.forEach((p, i) => { const g = p.group || tr('scene.otherObjects'); (groups.get(g) ?? groups.set(g, []).get(g)!).push(i); });
   const protoTris = (p: InstancePlacement) => inst.protos[p.proto]!.parts.reduce((a, x) => a + Math.floor(x.indices.length / 3), 0);
   return [
-    { id: 'geom', name: 'Геометрия уровня', kind: 'group', note: `${plain.length} меш.`, children: plain.map(meshNode) },
+    { id: 'geom', name: tr('scene.geometry'), kind: 'group', note: tr('scene.meshes', { n: plain.length }), children: plain.map(meshNode) },
     {
-      id: 'objects', name: 'Объекты', kind: 'group', note: String(inst.placements.length),
+      id: 'objects', name: tr('scene.objects'), kind: 'group', note: String(inst.placements.length),
       children: [...groups].sort((a, b) => b[1].length - a[1].length).map(([g, list]) => ({
         id: `g:${g}`, name: g, kind: 'group' as const, note: String(list.length),
         children: list.map((i) => {
           const p = inst.placements[i]!, proto = inst.protos[p.proto]!;
-          return { id: `i${i}`, name: p.name, kind: 'instance' as const, instance: i, note: `${proto.name.split('/').pop()} · ${protoTris(p)} тр.` };
+          return { id: `i${i}`, name: p.name, kind: 'instance' as const, instance: i, note: `${proto.name.split('/').pop()} · ${tr('scene.tris', { n: protoTris(p) })}` };
         }),
       })),
     },
@@ -89,6 +90,14 @@ export function rotatePlacement(model: Model, index: number, angle: number): Ret
     M[row * 4] = x * c - z * s;
     M[row * 4 + 2] = x * s + z * c;
   }
+  return applyPlacement(model, index);
+}
+
+/** Сдвинуть экземпляр на (dx, dy, dz) в координатах модели. */
+export function translatePlacement(model: Model, index: number, d: ArrayLike<number>): ReturnType<typeof applyPlacement> {
+  const p = model.instances?.placements[index];
+  if (!p) return [];
+  p.pose[12] = p.pose[12]! + d[0]!; p.pose[13] = p.pose[13]! + d[1]!; p.pose[14] = p.pose[14]! + d[2]!;
   return applyPlacement(model, index);
 }
 

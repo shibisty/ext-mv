@@ -1,6 +1,6 @@
 // Страница просмотрщика: стартовое окно выбора игры, верхняя панель инструментов, ресурсы слева, сцена/меши/анимации справа.
 import {
-  buildDiagnostics, createRegistry, instanceAt, rotatePlacement, sceneTree, ViewerSession,
+  buildDiagnostics, createRegistry, engineTitle, presetText, tr, translatePlacement, instanceAt, rotatePlacement, sceneTree, ViewerSession,
   type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Motion, type RayHit, type SceneNode,
 } from 'gmv';
 import { allEngines } from 'gmv/engines';
@@ -10,10 +10,11 @@ import { attachDrop } from './drop';
 import { createExportDialog } from './export-dialog';
 import { createLayers } from './layers';
 import { createStartScreen } from './start';
+import { applyDom, detectLang, onLangChange, setLang, t } from './i18n';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
-  if (!el) throw new Error('нет элемента #' + id);
+  if (!el) throw new Error('missing element #' + id);
   return el as T;
 };
 const input = (id: string) => $<HTMLInputElement>(id);
@@ -23,6 +24,8 @@ const button = (id: string) => $<HTMLButtonElement>(id);
 const PREF_KEY = 'fmt';
 const prefGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
 const prefSet = (k: string, v: string): void => { try { localStorage.setItem(k, v); } catch { /* приватный режим */ } };
+// язык — до создания интерфейса: статусы сессии и названия пресетов берутся на нём
+setLang(detectLang(prefGet('lang')));
 const appVersion = (() => { try { return chrome.runtime.getManifest().version; } catch { return ''; } })();
 
 function setStatus(text: string, err = false): void {
@@ -54,10 +57,10 @@ try {
     },
     onEnded: () => { button('btnPlay').textContent = '▶'; },
     onPick: (hit) => pickHit(hit),
-    onToolDrag: (dx) => rotateSelected(dx * 0.01),
+    onToolDrag: (dx, dy, e) => (viewer.tool === 'move' ? moveSelected(e, dx, dy) : rotateSelected(dx * 0.01)),
   });
 } catch (e) {
-  setStatus('Ошибка WebGL: ' + (e as Error).message, true);
+  setStatus(t('status.webgl', { error: (e as Error).message }), true);
   throw e;
 }
 $('ver').textContent = appVersion ? 'v' + appVersion : '';
@@ -80,21 +83,21 @@ function enterViewer(): void {
 button('btnGame').onclick = () => start.show(session.preset.id, true);
 
 function applyPreset(p: GamePreset): void {
-  const ui = p.ui ?? {}, exts = session.modelExtensions, motionExts = registry.presetMotionExtensions(p);
-  $('gameTitle').textContent = p.title;
+  const ui = p.ui ?? {}, exts = session.modelExtensions, motionExts = registry.presetMotionExtensions(p), x = presetText(p);
+  $('gameTitle').textContent = x.title;
   button('btnGame').dataset.preset = p.id;
-  $('fmtHint').textContent = p.hint ?? '';
+  $('fmtHint').textContent = x.hint;
   input('fileModel').accept = exts.map((e) => '.' + e).join(',');
   input('fileModel').multiple = true; // спутники: .mtl/.bin (assimp), .vvd/.vtx (Source), *T.mdl (GoldSrc)
   const hasMotions = motionExts.length > 0 || !!ui.motionAny;
   button('btnOmf').hidden = !hasMotions;
-  button('btnOmf').textContent = ui.motionLabel ?? '+ .' + (motionExts[0] ?? 'omf');
+  button('btnOmf').textContent = x.motionLabel ?? '+ .' + (motionExts[0] ?? 'omf');
   input('fileOmf').accept = (ui.motionAny ? exts : motionExts).map((e) => '.' + e).join(',');
   $('lblZup').hidden = !ui.zUp;
   $('lblInv').hidden = !ui.invertQuat;
   button('btnArch').hidden = !ui.archives;
   input('fileArch').accept = (ui.archiveExts ?? ['bsa']).map((e) => '.' + e).join(',');
-  button('btnArch').textContent = ui.archiveLabel ?? 'Открыть архив…';
+  button('btnArch').textContent = x.archiveLabel ?? t('left.archive');
   prefSet(PREF_KEY, p.id);
   refreshArchList();
 }
@@ -133,12 +136,12 @@ session.on('model', ({ model, main }) => {
   input('chkZup').checked = !!model.defaultZUp;
   input('chkInvQuat').checked = false;
   curMotion = -1;
-  $('info').textContent = [`Файл: ${main.name}`, ...model.info].join('\n');
+  $('info').textContent = [t('info.file', { name: main.name }), ...model.info].join('\n');
   setSelection(null);
   rebuildMeshList();
   const tree = sceneTree(model);
   layers.set(tree);
-  $('layersInfo').textContent = model.instances?.placements.length ? `объектов ${model.instances.placements.length}` : '';
+  $('layersInfo').textContent = model.instances?.placements.length ? t('right.objects', { n: model.instances.placements.length }) : '';
   rebuildMotions(session.motions);
   void applyTextures();
 });
@@ -156,7 +159,7 @@ function rebuildMeshList(): void {
     row.id = 'mesh' + i;
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    cb.checked = true;
+    cb.checked = !m.defaultHidden;
     cb.onchange = () => { viewer.renderer.setMeshVisible(i, cb.checked); layers.syncLeaf(`m${i}`); };
     const nm = document.createElement('span');
     nm.className = 'n';
@@ -167,7 +170,7 @@ function rebuildMeshList(): void {
     st.className = 'st';
     const bt = document.createElement('button');
     bt.textContent = '…';
-    bt.title = 'Выбрать текстуру вручную';
+    bt.title = t('mesh.pick');
     bt.onclick = () => { pendingMesh = i; input('fileMeshTex').value = ''; input('fileMeshTex').click(); };
     row.append(cb, nm, st, bt);
     box.append(row);
@@ -182,23 +185,54 @@ function updateRow(i: number): void {
 }
 const meshCheckbox = (i: number) => document.querySelector<HTMLInputElement>(`#mesh${i} input[type=checkbox]`);
 
+function motionLabel(m: Motion): string {
+  if (m.load) return m.name;
+  return `${m.name} (${m.frames ? t('anim.frames', { n: m.frames }) : t('anim.seconds', { n: m.duration.toFixed(2) })})${m.source && m.source !== 'model' ? ' · ' + m.source : ''}`;
+}
 function rebuildMotions(list: readonly Motion[]): void {
   const sel = select('motionSel');
   sel.textContent = '';
   const add = (v: number, t: string) => { const o = document.createElement('option'); o.value = String(v); o.textContent = t; sel.append(o); };
-  add(-1, '— bind-поза —');
-  list.forEach((m, i) => add(i, `${m.name}${m.frames ? ` (${m.frames} кадр.)` : ` (${m.duration.toFixed(2)} с)`}${m.source && m.source !== 'model' ? ' · ' + m.source : ''}`));
+  add(-1, t('anim.bind'));
+  list.forEach((m, i) => add(i, motionLabel(m)));
   if (curMotion >= list.length) curMotion = -1;
   sel.value = String(curMotion);
+  // длинные списки (Metro: тысячи анимаций) — с поиском
+  input('motionFilter').hidden = list.length < 20;
+  filterMotions();
 }
-function selectMotion(i: number): void {
+async function selectMotion(i: number): Promise<void> {
   curMotion = i;
-  viewer.setMotion(i >= 0 ? session.motions[i] ?? null : null);
+  let m = i >= 0 ? session.motions[i] ?? null : null;
+  // анимации из длинных списков (Metro) читаются при выборе
+  if (m?.load) {
+    const model = session.model;
+    try {
+      setStatus(t('anim.loading', { name: m.name }));
+      const full = { ...(await m.load()), source: m.source };
+      if (session.model !== model) return;
+      session.motions[i] = full;
+      m = full;
+      const opt = select('motionSel').querySelector<HTMLOptionElement>(`option[value="${i}"]`);
+      if (opt) opt.textContent = motionLabel(full);
+      setStatus(t('anim.loaded', { name: full.name }));
+    } catch (e) {
+      setStatus(t('anim.error', { error: (e as Error).message }), true);
+      return;
+    }
+  }
+  if (curMotion !== i) return;
+  viewer.setMotion(m);
   input('chkInvQuat').checked = viewer.state.invert;
   button('btnPlay').textContent = '⏸';
 }
 
-select('motionSel').onchange = (e) => selectMotion(parseInt((e.target as HTMLSelectElement).value, 10));
+function filterMotions(): void {
+  const q = input('motionFilter').value.trim().toLowerCase();
+  for (const o of select('motionSel').options) o.hidden = !!q && o.value !== '-1' && !o.textContent!.toLowerCase().includes(q);
+}
+input('motionFilter').oninput = filterMotions;
+select('motionSel').onchange = (e) => void selectMotion(parseInt((e.target as HTMLSelectElement).value, 10));
 button('btnPlay').onclick = () => { viewer.state.playing = !viewer.state.playing; button('btnPlay').textContent = viewer.state.playing ? '⏸' : '▶'; };
 input('rngTime').oninput = (e) => { viewer.seek(+(e.target as HTMLInputElement).value / 1000); button('btnPlay').textContent = '▶'; };
 input('rngSpeed').oninput = (e) => { const v = +(e.target as HTMLInputElement).value; viewer.state.speed = v; $('lblSpeed').textContent = v.toFixed(1) + '×'; };
@@ -211,9 +245,12 @@ const syncView = () => {
     tex: input('chkTex').checked, wire: input('chkWire').checked, skeleton: input('chkSkeleton').checked, grid: input('chkGrid').checked, alpha: input('chkAlpha').checked,
     normals: input('chkNormals').checked, normalFlipY: input('chkNormFlip').checked, pbr: input('chkPbr').checked,
     normalView: +select('selNormView').value as 0 | 1 | 2 | 3, normalStrength: +input('rngNI').value,
+    lightmap: input('chkLm').checked, lightmapScale: +input('rngLm').value,
   });
+  $('lblLm').textContent = (+input('rngLm').value).toFixed(2);
 };
-for (const id of ['chkTex', 'chkWire', 'chkSkeleton', 'chkGrid', 'chkAlpha', 'chkNormals', 'chkNormFlip', 'chkPbr']) input(id).onchange = syncView;
+for (const id of ['chkTex', 'chkWire', 'chkSkeleton', 'chkGrid', 'chkAlpha', 'chkNormals', 'chkNormFlip', 'chkPbr', 'chkLm']) input(id).onchange = syncView;
+input('rngLm').oninput = syncView;
 select('selNormView').onchange = syncView;
 input('rngNI').oninput = () => { $('lblNI').textContent = (+input('rngNI').value).toFixed(2); syncView(); };
 syncView();
@@ -231,7 +268,7 @@ popup('btnView', 'viewMenu');
 popup('btnInfo', 'infoPop');
 
 // ---------- камера: орбита / полёт, срез ----------
-const flySpeedLabel = () => { $('lblFlySpeed').textContent = viewer.cameraMode === 'fly' ? `${viewer.camera.speed < 10 ? viewer.camera.speed.toFixed(1) : Math.round(viewer.camera.speed)} ед/с` : ''; };
+const flySpeedLabel = () => { $('lblFlySpeed').textContent = viewer.cameraMode === 'fly' ? t('cam.speed', { v: viewer.camera.speed < 10 ? viewer.camera.speed.toFixed(1) : Math.round(viewer.camera.speed) }) : ''; };
 function setCameraMode(mode: 'orbit' | 'fly'): void {
   viewer.setCameraMode(mode);
   button('btnOrbit').classList.toggle('on', mode === 'orbit');
@@ -245,7 +282,7 @@ button('btnCam').onclick = () => viewer.fit();
 $<HTMLCanvasElement>('gl').addEventListener('wheel', () => flySpeedLabel(), { passive: true });
 const applyClip = () => {
   const v = +input('rngClip').value;
-  if (v >= 1000 || !viewer.model) { viewer.options.clipY = undefined; $('lblClip').textContent = 'выкл.'; return; }
+  if (v >= 1000 || !viewer.model) { viewer.options.clipY = undefined; $('lblClip').textContent = t('view.clipOff'); return; }
   const [lo, hi] = viewer.heightRange(), y = lo + ((hi - lo) * v) / 1000;
   viewer.options.clipY = y;
   $('lblClip').textContent = y.toFixed(1);
@@ -256,16 +293,17 @@ input('chkZup').onchange = (e) => { viewer.setZUp((e.target as HTMLInputElement)
 // ---------- инструменты: камера, выбор, поворот ----------
 function setTool(t: ViewerTool): void {
   viewer.tool = t;
-  for (const [id, v] of [['toolCamera', 'camera'], ['toolSelect', 'select'], ['toolRotate', 'rotate']] as const) button(id).classList.toggle('on', t === v);
+  for (const [id, v] of [['toolCamera', 'camera'], ['toolSelect', 'select'], ['toolMove', 'move'], ['toolRotate', 'rotate']] as const) button(id).classList.toggle('on', t === v);
   $('rotSteps').hidden = t !== 'rotate';
   const main = document.querySelector('main')!;
   main.classList.toggle('tool-select', t === 'select');
-  main.classList.toggle('tool-rotate', t === 'rotate');
+  main.classList.toggle('tool-rotate', t === 'rotate' || t === 'move');
   showSelInfo();
 }
 button('toolCamera').onclick = () => setTool('camera');
 button('toolSelect').onclick = () => setTool('select');
 button('toolRotate').onclick = () => setTool('rotate');
+button('toolMove').onclick = () => setTool('move');
 button('btnRotL').onclick = () => rotateSelected(-Math.PI / 2);
 button('btnRotR').onclick = () => rotateSelected(Math.PI / 2);
 document.addEventListener('keydown', (e) => {
@@ -274,6 +312,7 @@ document.addEventListener('keydown', (e) => {
   if (viewer.cameraMode === 'fly' && /^Key[WASDQEC]$/.test(e.code)) return;
   if (e.code === 'KeyV') setTool('select');
   else if (e.code === 'KeyR') setTool('rotate');
+  else if (e.code === 'KeyG') setTool('move');
   else if (e.code === 'KeyC') setTool('camera');
   else if (e.key === 'Escape' && selection && !$<HTMLDialogElement>('dlgExport').open) setSelection(null);
   else if (e.code === 'KeyF' && selection) focusSelection();
@@ -292,10 +331,10 @@ function showSelInfo(): void {
   box.hidden = false;
   if (selection.kind === 'mesh') {
     const x = m.meshes[selection.mesh]!;
-    box.textContent = `Меш ${selection.mesh}: ${x.name}${x.texture ? ' — ' + x.texture : ''} · ${x.indices.length / 3} тр.${viewer.tool === 'rotate' ? ' · поворот — только для объектов сцены' : ''}`;
+    box.textContent = `${t('sel.mesh', { i: selection.mesh, name: x.name })}${x.texture ? ' — ' + x.texture : ''} · ${t('sel.tris', { n: x.indices.length / 3 })}${viewer.tool === 'rotate' || viewer.tool === 'move' ? ' · ' + t('sel.rotateOnlyObjects') : ''}`;
   } else {
     const p = m.instances!.placements[selection.index]!, proto = m.instances!.protos[p.proto]!;
-    box.textContent = `${p.group ?? 'объект'} · ${p.name} — ${proto.name}${p.hidden ? ' (скрыт)' : ''}${viewer.tool === 'rotate' ? ' · тяните ЛКМ влево-вправо' : ''}`;
+    box.textContent = `${p.group ?? t('sel.object')} · ${p.name} — ${proto.name}${p.hidden ? t('sel.hidden') : ''}${viewer.tool === 'rotate' ? ' · ' + t('sel.drag') : viewer.tool === 'move' ? ' · ' + t('sel.dragMove') : ''}`;
   }
 }
 function setSelection(s: typeof selection): void {
@@ -317,6 +356,35 @@ function rotateSelected(angle: number): boolean {
   if (!m || selection?.kind !== 'instance') { if (selection) showSelInfo(); return false; }
   const p = m.instances!.placements[selection.index]!;
   for (const r of rotatePlacement(m, selection.index, angle)) viewer.renderer.updateRange(r.mesh, r.vStart, r.vCount, r.iStart, r.iCount, !!p.hidden);
+  return true;
+}
+/**
+ * Перетаскивание выбранного объекта: по горизонтальной плоскости через его начало координат (луч мыши до и после),
+ * с Ctrl — по вертикали (пропорционально расстоянию до камеры).
+ */
+function moveSelected(e: PointerEvent, dx: number, dy: number): boolean {
+  const m = session.model;
+  if (!m || selection?.kind !== 'instance') { if (selection) showSelInfo(); return false; }
+  const p = m.instances!.placements[selection.index]!, up = viewer.renderer.zUpOn ? 2 : 1, piv = [p.pose[12]!, p.pose[13]!, p.pose[14]!];
+  const d = [0, 0, 0];
+  if (e.ctrlKey) {
+    const eye = viewer.camera.eye(), dist = Math.hypot(...[0, 1, 2].map((k) => eye[k]! - viewer.renderer.toView(piv[0]!, piv[1]!, piv[2]!)[k]!));
+    d[up] = -dy * dist * 0.002;
+  } else {
+    const hit = (cx: number, cy: number) => {
+      const r = viewer.rayAt(cx, cy);
+      if (!r || Math.abs(r.dir[up]!) < 1e-6) return null;
+      const t = (piv[up]! - r.origin[up]!) / r.dir[up]!;
+      return t > 0 ? r.origin.map((o, k) => o + r.dir[k]! * t) : null;
+    };
+    const a = hit(e.clientX - dx, e.clientY - dy), b = hit(e.clientX, e.clientY);
+    if (!a || !b) return true;
+    for (let k = 0; k < 3; k++) d[k] = b[k]! - a[k]!;
+    // не уносить объект за горизонт одним рывком
+    const len = Math.hypot(d[0]!, d[1]!, d[2]!), max = viewer.renderer.bounds.radius * 0.2;
+    if (len > max) for (let k = 0; k < 3; k++) d[k] = (d[k]! / len) * max;
+  }
+  for (const r of translatePlacement(m, selection.index, d)) viewer.renderer.updateRange(r.mesh, r.vStart, r.vCount, r.iStart, r.iCount, !!p.hidden);
   return true;
 }
 /** Камера на выбранное: центр рамки его вершин. */
@@ -369,7 +437,7 @@ function refreshArchList(): void {
   sel.textContent = '';
   archItems = items;
   items.forEach((it, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = it.entry.path; o.title = it.entry.path; sel.append(o); });
-  $('archInfo').textContent = session.archives.length ? `${session.archives.length} арх. · моделей ${total}${items.length >= 400 ? ' (показано 400)' : ''}` : '';
+  $('archInfo').textContent = session.archives.length ? t('left.archInfo', { a: session.archives.length, n: total }) + (items.length >= 400 ? t('left.shown400') : '') : '';
 }
 input('archFilter').oninput = refreshArchList;
 select('archList').onchange = (e) => {
@@ -401,8 +469,8 @@ button('btnDiag').onclick = async () => {
   const f = session.lastFailure;
   if (!f) return;
   const text = await buildDiagnostics({ file: f.file, format: f.format, preset: session.preset.id, error: f.error, appVersion });
-  try { await navigator.clipboard.writeText(text); setStatus('Диагностика скопирована в буфер обмена'); }
-  catch { $('info').textContent = text; $('infoPop').hidden = false; setStatus('Не удалось скопировать — диагностика выведена в «Сведения»', true); }
+  try { await navigator.clipboard.writeText(text); setStatus(t('status.diagCopied')); }
+  catch { $('info').textContent = text; $('infoPop').hidden = false; setStatus(t('status.diagFailed'), true); }
 };
 
 attachDrop(window, $('drop'), async ({ files, folders }) => {
@@ -443,10 +511,38 @@ const exportDialog = createExportDialog({
         return r.image ? { name: src?.name ?? '', image: pixels(r.image) } : null;
       },
     };
-    return { model, ctx, engineTitle: `${session.preset.title} (${registry.engine(sourceEngine)?.title ?? sourceEngine})` };
+    return { model, ctx, engineTitle: `${presetText(session.preset).title} (${engineTitle(registry.engine(sourceEngine), sourceEngine)})` };
   },
 });
 button('btnExport').onclick = () => exportDialog.open();
+
+// ---------- язык ----------
+document.querySelectorAll<HTMLSelectElement>('select.lang').forEach((sel) => {
+  sel.onchange = () => { prefSet('lang', sel.value); setLang(sel.value === 'en' ? 'en' : 'ru'); };
+});
+onLangChange(() => {
+  applyPreset(session.preset);
+  start.refresh();
+  flySpeedLabel();
+  applyClip();
+  const model = session.model;
+  if (model) {
+    if (session.main) $('info').textContent = [t('info.file', { name: session.main.name }), ...model.info].join('\n');
+    layers.set(sceneTree(model));
+    if (selection) layers.reveal(selection.kind === 'mesh' ? `m${selection.mesh}` : `i${selection.index}`);
+    $('layersInfo').textContent = model.instances?.placements.length ? t('right.objects', { n: model.instances.placements.length }) : '';
+    rebuildMotions(session.motions);
+    document.querySelectorAll<HTMLButtonElement>('#meshList .mesh button').forEach((b) => { b.title = t('mesh.pick'); });
+    void applyTextures();
+  }
+  // строка статуса: последнее спокойное сообщение — на новом языке
+  if (!$('status').classList.contains('err')) setStatus(session.main ? tr('session.loaded', { name: session.main.name }) : t('status.initial'));
+  showSelInfo();
+  exportDialog.refresh();
+});
+applyDom();
+setStatus(t('status.initial'));
+applyClip();
 
 // ---------- запуск ----------
 applyPreset(session.preset);

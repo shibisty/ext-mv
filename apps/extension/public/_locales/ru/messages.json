@@ -1,0 +1,5 @@
+{
+  "appName": { "message": "Game Model Viewer" },
+  "appDesc": { "message": "WebGL-просмотрщик моделей и уровней игр: S.T.A.L.K.E.R. (X-Ray), Metro 2033 (4A), Bethesda, GTA, Arma, id Tech, Valve, Unreal, CoD, CryEngine и др.; экспорт в X-Ray SDK и OBJ." },
+  "actionTitle": { "message": "Открыть Game Model Viewer" }
+}

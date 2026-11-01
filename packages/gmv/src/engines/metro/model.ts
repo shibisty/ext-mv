@@ -11,7 +11,8 @@
 import { boundsOf, skinnedBounds } from '../../core/geometry';
 import type { LoadContext } from '../../core/plugin';
 import { NodeSkeleton, type SkeletonNode } from '../../core/skeleton';
-import type { Mesh, Model, VFile } from '../../core/types';
+import type { Archive, Mesh, Model, NodeMotion, VFile } from '../../core/types';
+import { metroMotionHeader, parseMetroMotion } from './motion';
 
 interface Chunk { id: number; data: Uint8Array }
 export function metroChunks(u: Uint8Array): Chunk[] {
@@ -78,6 +79,14 @@ export function parseMetroMeshes(model9: Uint8Array): MetroPart[] {
 
 export interface MetroBone { name: string; parent: string; rot: number[]; pos: number[] }
 
+/** Кости скелета; crc (u32 в начале чанка 0x0d) совпадает с crc в анимациях, motionFolders — папки motions (чанк 0x13). */
+export function parseMetroSkeletonInfo(u: Uint8Array): { bones: MetroBone[]; crc: number; motionFolders: string[] } {
+  const all = metroChunks(u), c = all.find((x) => x.id === 0x0d), m = all.find((x) => x.id === 0x13);
+  const crc = c && c.data.length >= 4 ? dvOf(c.data).getUint32(0, true) : 0;
+  const motionFolders = m ? (cstrs(m.data)[0] ?? '').split(',').map((x) => x.trim().toLowerCase().replace(/\\/g, '/')).filter(Boolean) : [];
+  return { bones: parseMetroSkeleton(u), crc, motionFolders };
+}
+
 export function parseMetroSkeleton(u: Uint8Array): MetroBone[] {
   const c = metroChunks(u).find((x) => x.id === 0x0d);
   if (!c) throw new Error('В .skeleton нет чанка костей');
@@ -140,12 +149,14 @@ export function partsToMeshes(parts: MetroPart[], skinned: boolean, keepEmpty = 
       name: p.texture || '?', texture: p.texture, shader: p.shader, material: p.material, vertexCount: n,
       pos: Float32Array.from(p.pos), nor: Float32Array.from(p.nor), uv: Float32Array.from(p.uv), bone, weight,
       indices: n > 65535 ? Uint32Array.from(p.idx) : Uint16Array.from(p.idx), skinned: skinned && !!p.bones,
+      alphaTest: /aref|wallmark|alpha/i.test(p.shader) || undefined,
+      defaultHidden: /^\$|^light\\/i.test(p.texture) || undefined,
     };
   });
 }
 
 /** Корень «…/meshes/» по пути файла внутри архива или папки. */
-function meshesRoot(path: string): string {
+export function meshesRoot(path: string): string {
   const p = path.toLowerCase().replace(/\\/g, '/'), i = p.lastIndexOf('meshes/');
   return i >= 0 ? path.slice(0, i + 7) : '';
 }
@@ -153,6 +164,9 @@ function meshesRoot(path: string): string {
 export interface MetroModelData {
   parts: MetroPart[];
   bones: MetroBone[] | null;
+  skeletonCrc: number;
+  /** Папки анимаций относительно content/motions (из .skeleton). */
+  motionFolders: string[];
   skeletonName: string;
   meshNames: string[];
   missing: string[];
@@ -162,7 +176,7 @@ export interface MetroModelData {
  * Разобрать .model/.mesh; для скиновой модели прочитать .mesh и .skeleton через read(путь относительно meshes/, с расширением).
  */
 export async function readMetroModel(u: Uint8Array, read: (rel: string) => Promise<Uint8Array | null>): Promise<MetroModelData> {
-  const top = metroChunks(u), res: MetroModelData = { parts: [], bones: null, skeletonName: '', meshNames: [], missing: [] };
+  const top = metroChunks(u), res: MetroModelData = { parts: [], bones: null, skeletonCrc: 0, motionFolders: [], skeletonName: '', meshNames: [], missing: [] };
   const m9 = top.find((c) => c.id === 9);
   if (m9) res.parts.push(...parseMetroMeshes(m9.data));
   const sk = top.find((c) => c.id === 0x14), names = top.find((c) => c.id === 0x10);
@@ -179,7 +193,7 @@ export async function readMetroModel(u: Uint8Array, read: (rel: string) => Promi
   }
   if (res.skeletonName) {
     const rel = res.skeletonName.toLowerCase().replace(/\\/g, '/') + '.skeleton', su = await read(rel);
-    if (su) res.bones = parseMetroSkeleton(su); else res.missing.push(rel);
+    if (su) { const info = parseMetroSkeletonInfo(su); res.bones = info.bones; res.skeletonCrc = info.crc; res.motionFolders = info.motionFolders; } else res.missing.push(rel);
   }
   return res;
 }
@@ -215,7 +229,38 @@ export function metroModelFromData(d: MetroModelData, name: string): Model {
     ...(d.meshNames.length ? [`Части: ${d.meshNames.join(', ')}`] : []),
     ...(d.missing.length ? [`Не найдены: ${d.missing.join(', ')} — откройте content.vfi или папку content`] : []),
   ];
-  return { meshes, skeleton: sk, motions: [], bounds: sk ? skinnedBounds(sk, meshes) : boundsOf(meshes), flipZ: true, info };
+  const model: Model = { meshes, skeleton: sk, motions: [], bounds: sk ? skinnedBounds(sk, meshes) : boundsOf(meshes), flipZ: true, info };
+  if (topo) {
+    const remap = (b: number) => topo.remap[b] ?? -1;
+    model.meta = { metroSkeletonCrc: d.skeletonCrc, metroMotionFolders: d.motionFolders };
+    model.loadMotions = async (file) => {
+      const u = new Uint8Array(await file.arrayBuffer()), h = metroMotionHeader(u);
+      if (d.skeletonCrc && h.skeletonCrc !== d.skeletonCrc) throw new Error(`анимация для другого скелета (crc ${h.skeletonCrc.toString(16)}, нужен ${d.skeletonCrc.toString(16)})`);
+      return [parseMetroMotion(u, file.name.replace(/\.motion$/i, ''), remap)];
+    };
+  }
+  return model;
+}
+
+/**
+ * Анимации скелета из архива: motions/<папка из .skeleton>/**.motion. Список длинный (у людей ~2000), поэтому
+ * анимации подгружаются при выборе (Motion.load).
+ */
+export function listMetroMotions(model: Model, archive: Archive, root: string): NodeMotion[] {
+  const folders = (model.meta?.metroMotionFolders as string[] | undefined) ?? [];
+  if (!folders.length || !model.loadMotions) return [];
+  const prefixes = folders.map((f) => `${root}motions/${f.replace(/\/+$/, '')}/`), out: NodeMotion[] = [];
+  for (const e of archive.entries) {
+    if (!e.path.endsWith('.motion')) continue;
+    const pre = prefixes.find((x) => e.path.startsWith(x));
+    if (!pre) continue;
+    const name = e.path.slice(pre.length).replace(/\.motion$/, '');
+    out.push({
+      kind: 'node', name, tps: 30, chan: new Map(), duration: 0,
+      load: async () => (await model.loadMotions!(archive.fileOf(e)))[0]!,
+    } as NodeMotion);
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function loadMetroModel(main: VFile, ctx: LoadContext): Promise<Model> {

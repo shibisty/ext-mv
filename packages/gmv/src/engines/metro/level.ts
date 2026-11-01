@@ -7,7 +7,8 @@ import { boundsOf } from '../../core/geometry';
 import { decodeDDS } from '../../core/images/dds';
 import type { LoadContext } from '../../core/plugin';
 import type { TextureLibrary, TextureSource } from '../../core/textures';
-import type { Mesh, Model, VFile } from '../../core/types';
+import type { EngineMaps } from '../../core/plugin';
+import type { DecodedImage, Mesh, Model, VFile } from '../../core/types';
 import { ddsFromPieces } from './texture';
 
 const STRIDE = 32;
@@ -39,7 +40,7 @@ export function metroLevelModel(level: Uint8Array, geom: Uint8Array, name: strin
   const ver = top.find((c) => c.id === 1), sh = top.find((c) => c.id === 2), vis = top.find((c) => c.id === 3), vb = g.find((c) => c.id === 9), ib = g.find((c) => c.id === 10);
   if (!sh || !vis || !vb || !ib) throw new Error('Не уровень 4A: нет шейдеров, визуалов или буферов level.geom_pc');
   const shaders = parseShaders(sh.data), V = dvOf(vb.data), I = dvOf(ib.data), nv = vb.data.length / STRIDE, ni = ib.data.length / 2;
-  const groups = new Map<number, { pos: number[]; nor: number[]; uv: number[]; idx: number[] }>();
+  const groups = new Map<number, { pos: number[]; nor: number[]; uv: number[]; uv2: number[]; idx: number[] }>();
   let used = 0, bad = 0, hier = 0;
   for (const v of chunks(vis.data)) {
     const sub = chunks(v.data), gc = sub.find((c) => c.id === 0x15), hd = sub.find((c) => c.id === 1);
@@ -48,7 +49,7 @@ export function metroLevelModel(level: Uint8Array, geom: Uint8Array, name: strin
     const si = dvOf(hd.data).getUint16(2, true);
     if (voff + vcnt > nv || ioff + icnt > ni) { bad++; continue; }
     let gr = groups.get(si);
-    if (!gr) groups.set(si, (gr = { pos: [], nor: [], uv: [], idx: [] }));
+    if (!gr) groups.set(si, (gr = { pos: [], nor: [], uv: [], uv2: [], idx: [] }));
     const base = gr.pos.length / 3;
     for (let i = 0; i < vcnt; i++) {
       const o = (voff + i) * STRIDE;
@@ -56,6 +57,8 @@ export function metroLevelModel(level: Uint8Array, geom: Uint8Array, name: strin
       const nx = (V.getUint8(o + 14) / 255) * 2 - 1, ny = (V.getUint8(o + 13) / 255) * 2 - 1, nz = (V.getUint8(o + 12) / 255) * 2 - 1, l = Math.hypot(nx, ny, nz) || 1;
       gr.nor.push(nx / l, ny / l, nz / l);
       gr.uv.push(V.getInt16(o + 24, true) / 1024, V.getInt16(o + 26, true) / 1024);
+      // UV карты освещения: s16 / 32768 по всей карте level.lmap_pc
+      gr.uv2.push(V.getInt16(o + 28, true) / 32768, V.getInt16(o + 30, true) / 32768);
     }
     for (let i = 0; i < icnt; i++) gr.idx.push(base + I.getUint16((ioff + i) * 2, true));
     used++;
@@ -64,7 +67,8 @@ export function metroLevelModel(level: Uint8Array, geom: Uint8Array, name: strin
     const s = shaders[si], n = gr.pos.length / 3;
     return {
       name: `${s?.texture || '?'} · ${s?.material ?? ''}`, texture: s?.texture ?? '', shader: s?.shader, material: s?.material, vertexCount: n,
-      pos: Float32Array.from(gr.pos), nor: Float32Array.from(gr.nor), uv: Float32Array.from(gr.uv),
+      pos: Float32Array.from(gr.pos), nor: Float32Array.from(gr.nor), uv: Float32Array.from(gr.uv), uv2: Float32Array.from(gr.uv2),
+      alphaTest: /aref|wallmark|alpha/i.test(s?.shader ?? '') || undefined,
       bone: new Float32Array(n * 4), weight: new Float32Array(n * 4).map((_, i) => (i % 4 === 0 ? 1 : 0)), indices: Uint32Array.from(gr.idx), skinned: false,
     };
   }).filter((m) => m.indices.length);
@@ -73,7 +77,6 @@ export function metroLevelModel(level: Uint8Array, geom: Uint8Array, name: strin
     `Уровень 4A (Metro 2033, версия ${version}): ${name}`,
     `Визуалов с геометрией ${used}, узлов иерархии ${hier}${bad ? `, пропущено ${bad}` : ''}; шейдеров ${shaders.length}`,
     `Мешей (по шейдерам) ${meshes.length}, вершин ${meshes.reduce((a, m) => a + m.vertexCount, 0)}, треугольников ${meshes.reduce((a, m) => a + m.indices.length / 3, 0)}`,
-    'Показана статическая геометрия уровня; объекты из level.bin (двери, пропсы, NPC) — следующий шаг.',
   ];
   return { meshes, skeleton: null, motions: [], bounds: boundsOf(meshes), flipZ: true, info };
 }
@@ -83,6 +86,12 @@ export async function loadMetroLevel(main: VFile, ctx: LoadContext): Promise<Mod
   if (!geom) throw new Error('Рядом с level нет level.geom_pc');
   const dir = (main.path ?? '').split('/').slice(-2, -1)[0] ?? main.name;
   const model = metroLevelModel(new Uint8Array(await main.arrayBuffer()), new Uint8Array(geom), dir);
+  // карта освещения: 4096 × 4096, 1 байт (яркость); занята верхняя часть — UV уровня указывают в неё
+  const lm = await ctx.sibling('level.lmap_pc');
+  if (lm && lm.byteLength === 4096 * 4096) {
+    model.lightmap = { width: 4096, height: 4096, data: new Uint8Array(lm), scale: 2.5 };
+    model.info.push('Освещение: карта level.lmap_pc (4096×4096)');
+  }
   const bin = await ctx.sibling('level.bin');
   if (!bin) { model.info.push('Нет level.bin — объекты уровня не показаны'); return model; }
   try {
@@ -97,7 +106,7 @@ export async function loadMetroLevel(main: VFile, ctx: LoadContext): Promise<Mod
       placements: r.instances.placements.map((pl) => ({ ...pl, ranges: pl.ranges?.map((x) => ({ ...x, mesh: x.mesh + base })) })),
     };
     model.bounds = boundsOf(model.meshes);
-    model.info.splice(model.info.length - 1, 1, ...r.info);
+    model.info.push(...r.info);
   } catch (e) {
     model.info.push(`level.bin: ${(e as Error).message}`);
   }
@@ -126,4 +135,34 @@ export async function resolveMetroTexture(name: string, lib: TextureLibrary): Pr
     } as TextureSource;
   }
   return null;
+}
+
+/**
+ * Карты по «<текстура>_bump» (Metro 2033): DXT5, альфа — высота, зелёный — сила блика, красный и синий пусты.
+ * Нормали в касательном пространстве считаются из высоты (центральные разности с переносом по краям, Y как в DirectX);
+ * поверхность PBR: R — AO 1, G — шероховатость (1 − 0.7 × блик), B — металл 0, A — блик.
+ */
+export async function resolveMetroMaps(texture: string, lib: TextureLibrary): Promise<EngineMaps | null> {
+  if (!texture) return null;
+  const src = await resolveMetroTexture(texture + '_bump', lib);
+  return src?.decoded?.rgba ? metroBumpMaps(src.decoded) : null;
+}
+
+/** Нормали и поверхность из декодированной «_bump» (альфа — высота, зелёный — блик). */
+export function metroBumpMaps(img: DecodedImage): EngineMaps | null {
+  if (!img.rgba) return null;
+  const { width: w, height: h, rgba: px } = img, n = w * h;
+  const nor = new Uint8Array(n * 4), surf = new Uint8Array(n * 4);
+  // сила рельефа: перепад высоты 0..1 на 1/64 ширины текстуры даёт наклон ~45°
+  const k = w / 64, H = (x: number, y: number) => px[(((y + h) % h) * w + ((x + w) % w)) * 4 + 3]! / 255;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dx = (H(x + 1, y) - H(x - 1, y)) * 0.5 * k, dy = (H(x, y + 1) - H(x, y - 1)) * 0.5 * k, l = Math.hypot(dx, dy, 1), o = (y * w + x) * 4;
+    nor[o] = Math.round((-dx / l * 0.5 + 0.5) * 255); nor[o + 1] = Math.round((-dy / l * 0.5 + 0.5) * 255); nor[o + 2] = Math.round((1 / l * 0.5 + 0.5) * 255); nor[o + 3] = 255;
+    const g = px[o + 1]! / 255;
+    surf[o] = 255; surf[o + 1] = Math.round((1 - 0.7 * g) * 255); surf[o + 2] = 0; surf[o + 3] = Math.round(g * 255);
+  }
+  return {
+    normal: { image: { width: w, height: h, rgba: nor }, packing: 'rgb', label: `N ${w}×${h} (_bump)` },
+    surface: { image: { width: w, height: h, rgba: surf }, label: 'PBR (_bump)' },
+  };
 }

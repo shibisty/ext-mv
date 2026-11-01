@@ -2,6 +2,7 @@
 // Движки подключаются отдельно: `import { allEngines } from 'gmv/engines'` или `import { xrayEngine } from 'gmv/engines/xray'`.
 export * from './core/types';
 export * from './core/plugin';
+export { setLocale, getLocale, tr, presetText, engineTitle, exporterText, type Locale } from './core/i18n';
 export { Registry, type Detection } from './core/registry';
 export { ViewerSession, loadSameDirMotions, errMsg, type SessionEvents, type TextureResult, type NormalResult, type SurfaceResult, type ArchiveItem } from './core/session';
 export { analyzeNormalMap, computeTangents, normalCandidates, type NormalPacking } from './core/normals';
@@ -9,7 +10,7 @@ export { composeSurface, surfaceCandidates, surfaceMaps } from './core/surface';
 export { TextureLibrary, type TextureSource, type ImageDecoder } from './core/textures';
 export { buildDiagnostics, hexDump, type DiagnosticsInput } from './core/diagnostics';
 export { NodeSkeleton, type SkeletonNode } from './core/skeleton';
-export { sceneTree, sceneLeaves, applyPlacement, rotatePlacement, visibleIndices, instanceAt, pickRay, type SceneNode, type RayHit } from './core/scene';
+export { sceneTree, sceneLeaves, applyPlacement, rotatePlacement, translatePlacement, visibleIndices, instanceAt, pickRay, type SceneNode, type RayHit } from './core/scene';
 export { coreEngine } from './core/builtin';
 export { createArchive, readRange, TEXTURE_RE, type ArchiveSpec } from './core/archives/common';
 export { openFolder } from './core/archives/folder';

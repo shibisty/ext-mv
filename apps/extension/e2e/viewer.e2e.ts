@@ -77,6 +77,13 @@ describe('расширение в Chromium', () => {
     expect(await page.locator('#start').isVisible()).toBe(true);
     expect(await page.locator('#app').isVisible()).toBe(false);
     await expect.poll(() => page.locator('#gameGrid .card').count()).toBeGreaterThan(30);
+    // язык по умолчанию — по браузеру (здесь английский); дальше тесты идут на русском
+    expect(await page.locator('html').getAttribute('lang')).toBe('en');
+    expect(await page.locator('#gameFilter').getAttribute('placeholder')).toBe('Search games and formats');
+    expect(await page.locator('#gameGrid .card[data-game="stalker-soc"] b').textContent()).toContain('Shadow of Chernobyl');
+    await page.locator('#start select.lang').selectOption('ru');
+    expect(await page.locator('#gameFilter').getAttribute('placeholder')).toBe('Поиск игры или формата');
+    expect(await page.locator('#gameGrid .card[data-game="stalker-soc"] b').textContent()).toContain('Тень Чернобыля');
     await page.locator('#gameFilter').fill('метро');
     expect(await page.locator('#gameGrid .card').count()).toBeLessThan(5);
     await page.locator('#gameFilter').fill('');
@@ -230,9 +237,35 @@ describe('расширение в Chromium', () => {
     expect(await page.locator('#layers .tn.cur').count()).toBe(1);
     expect(await page.locator('#meshList .mesh.cur').count()).toBe(1);
     await page.screenshot({ path: resolve(__dirname, '../dist/e2e-select.png') });
+    // «Двигать»: у обычного меша (не объекта сцены) — подсказка, что двигаются только объекты
+    await page.locator('#toolMove').click();
+    expect(await page.locator('#selInfo').textContent()).toMatch(/только объекты сцены/);
     await page.keyboard.press('Escape');
     expect(await page.locator('#selInfo').isVisible()).toBe(false);
     await page.locator('#toolCamera').click();
+    expect(errors).toEqual([]);
+  });
+
+  it('смена языка на лету: интерфейс, слои, окно экспорта; выбор запоминается', async () => {
+    await page.locator('#fileModel').setInputFiles(put('lang.md2', makeMd2()));
+    await expect.poll(() => status().textContent()).toContain('Загружено: lang.md2');
+    await page.locator('#top select.lang').selectOption('en');
+    expect(await page.locator('#btnFolder').textContent()).toBe('Game folder…');
+    expect(await status().textContent()).toBe('Loaded: lang.md2');
+    expect(await page.locator('#toolSelect').textContent()).toContain('Select');
+    expect(await page.locator('#paneMeshes h2').textContent()).toBe('Meshes and textures');
+    expect(await page.locator('#layers .tn').first().textContent()).toContain('Model');
+    expect(await page.locator('#gameTitle').textContent()).toBe('Quake II — MD2');
+    await page.locator('#btnExport').click();
+    expect(await page.locator('#expTargets .target[data-id="xray-sdk"] b').textContent()).toContain('X-Ray SDK 0.7 sources');
+    expect(await page.locator('#btnExpRun').textContent()).toBe('Export');
+    await page.screenshot({ path: resolve(__dirname, '../dist/e2e-en.png') });
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await expect.poll(() => page.locator('#gameFilter').getAttribute('placeholder')).toBe('Search games and formats');
+    await page.locator('#start select.lang').selectOption('ru');
+    await chooseGame('quake2');
+    expect(await page.locator('#btnFolder').textContent()).toBe('Папка игры…');
     expect(errors).toEqual([]);
   });
 

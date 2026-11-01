@@ -44,8 +44,19 @@ export interface FormatPlugin {
   load(main: VFile, ctx: LoadContext): Promise<Model>;
   /** Поиск текстуры меша по правилам движка (материалы .vmt/.mtr/.mtl…). */
   resolveTexture?(mesh: Mesh, model: Model, lib: TextureLibrary): Promise<TextureSource | null>;
+  /**
+   * Карты меша по правилам движка, если они не лежат отдельными файлами нормалей/PBR (Metro: «_bump» — высота и блик,
+   * нормали считаются из высоты). Возвращает готовые картинки.
+   */
+  resolveMaps?(mesh: Mesh, model: Model, lib: TextureLibrary): Promise<EngineMaps | null>;
   /** Подгрузка сопутствующих файлов после загрузки (одноимённый .txd, анимации из папки…). */
   afterLoad?(ctx: AfterLoadContext): Promise<void>;
+}
+
+/** Карты, собранные движком: нормали (касательное пространство, Y как в DirectX) и PBR-поверхность (R AO, G шероховатость, B металл, A блик). */
+export interface EngineMaps {
+  normal?: { image: DecodedImage; packing?: 'rgb' | 'rg' | 'ag'; label?: string };
+  surface?: { image: DecodedImage; label?: string };
 }
 
 export interface ArchivePlugin {

@@ -130,7 +130,7 @@ export function makeSkinnedModel(): { model: Uint8Array; mesh: Uint8Array; skele
   const sk = new Bin().u32(0x1234).u16(2);
   sk.cstr('a_child').cstr('root').f32s(0, Math.PI / 2, 0).f32s(1, 0, 0).u16(0);
   sk.cstr('root').cstr('').f32s(0, 0, 0).f32s(0, 1, 0).u16(0);
-  const skeleton = chunkOf(chunkOf(new Bin(), 1, new Bin().u32(1)), 0x0d, sk).toU8();
+  const skeleton = chunkOf(chunkOf(chunkOf(new Bin(), 1, new Bin().u32(1)), 0x0d, sk), 0x13, new Bin().cstr('test\\rig')).toU8();
   // таблица костей меша: [1 (root), 0 (a_child)]; в вершине номер × 3
   const vb = new Bin().u8(2).u8(1).u8(0).zeros(2 * 60).u32(3);
   for (const [x, y, z, b] of [[0, 2720, 0, 0], [2720, 2720, 0, 3], [0, 5440, 0, 0]]) vb.i16(x!).i16(y!).i16(z!).i16(1).u8(127).u8(255).u8(127).u8(0).u32(0).u32(0).u8(b!).u8(0).u8(0).u8(0).u8(255).u8(0).u8(0).u8(0).i16(1024).i16(2048);
@@ -141,4 +141,41 @@ export function makeSkinnedModel(): { model: Uint8Array; mesh: Uint8Array; skele
   chunkOf(m, 4, new Bin().u32(3).u16(0).u16(1).u16(2));
   const mesh = chunkOf(new Bin(), 9, chunkOf(new Bin(), 0, m)).toU8();
   return { model: model.toU8(), mesh, skeleton };
+}
+
+/**
+ * .motion 4A: кости bones (номера в файле скелета); каждая — поворот по ключам (кватернионы [x,y,z,w]) или один,
+ * позиция по ключам (с масштабом/смещением) или постоянная.
+ */
+export function makeMotion(crc: number, nBones: number, keys: number, tracks: Array<{ bone: number; rot: number[][]; pos: number[][]; small3?: boolean }>): Uint8Array {
+  const h = new Bin().u32(8).u32(crc).u16(nBones), mask = new Uint8Array(16);
+  for (const t of tracks) mask[t.bone >> 3]! |= 1 << (t.bone & 7);
+  h.bytes(mask);
+  const info = new Bin().u16(0).f32(1).f32(3).f32(3).u32(keys).u16(0).u16(keys - 1).zeros(32);
+  const d = new Bin();
+  for (const t of [...tracks].sort((a, b) => a.bone - b.bone)) {
+    const animRot = t.rot.length > 1, animPos = t.pos.length > 1;
+    d.u8((animPos ? 1 : 0) | (animRot ? 2 : 0) | 4 | (t.small3 ? 0x20 : 0)).u32(0x11223344).u32(0x55667788);
+    for (const q of t.rot) {
+      if (t.small3) {
+        // «три меньших»: наибольшая компонента опускается, её номер — в младших битах первых двух чисел
+        const idx = [0, 1, 2, 3].reduce((m, k) => (Math.abs(q[k]!) > Math.abs(q[m]!) ? k : m), 0), sg = q[idx]! < 0 ? -1 : 1;
+        const rest = q.filter((_, k) => k !== idx).map((v) => Math.round((v * sg) / Math.SQRT1_2 * 32767));
+        rest[0] = (rest[0]! & ~1) | (idx >> 1); rest[1] = (rest[1]! & ~1) | (idx & 1);
+        d.i16(rest[0]!).i16(rest[1]!).i16(rest[2]!);
+        continue;
+      }
+      const s = q[3]! < 0 ? -1 : 1; d.i16(Math.round(q[0]! * s * 32767)).i16(Math.round(q[1]! * s * 32767)).i16(Math.round(q[2]! * s * 32767));
+    }
+    if (animPos) {
+      d.u32(0).u32(0);
+      const lo = [0, 1, 2].map((a) => Math.min(...t.pos.map((p) => p[a]!))), hi = [0, 1, 2].map((a) => Math.max(...t.pos.map((p) => p[a]!)));
+      const off = lo.map((l, a) => (l + hi[a]!) / 2), sc = lo.map((l, a) => (hi[a]! - l) / 2 / 32767 || 1e-9);
+      for (const p of t.pos) for (let a = 0; a < 3; a++) d.i16(Math.round((p[a]! - off[a]!) / sc[a]!));
+      d.f32s(...sc).f32s(...off);
+    } else d.f32s(...t.pos[0]!);
+  }
+  const out = new Bin();
+  for (const [id, b] of [[0, h], [1, info], [2, d]] as const) out.u32(id).u32(b.length).bytes(b.toU8());
+  return out.toU8();
 }

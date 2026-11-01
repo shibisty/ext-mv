@@ -20,7 +20,7 @@ Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Detailed plan with p
 | Game / engine | Status | What works | Missing / next |
 |---|---|---|---|
 | **S.T.A.L.K.E.R.** SoC, CS, CoP (X-Ray) | ✅ verified | OGF v4 models with skeletons and animations (internal and external `.omf`, body-part motions mapped via `S_SMPARAMS`, 3- and 4-weight vertices); `.db`/`.xdb` archives (LZHUF tables, LZO files); compiled levels (`level` + `level.geom`); SDK sources (`.object`, `.level` scenes). Checked: OGF 935/935 (SoC), 641/641 (CS), 914/914 (CoP); all 30 SoC levels | Encrypted SoC archives (`gamedata.db*`) — use an unpacked `gamedata` folder; blending legs + torso animations; compressed tree positions in levels |
-| **Metro 2033** (4A Engine, 2010) | ✅ verified | `content.vfi` + `.vfs` archives (QuickLZ); levels (`level` + `level.geom_pc`) with all objects from `level.bin` (props, doors, wagons, NPCs); `.model`/`.mesh`/`.skeleton` (static and skinned); textures (`.512`/`.1024`/`.2048` → DDS). `l08_market`: 2 355 objects, 659 models | `.motion` animations; Metro Redux, Last Light, Exodus (schemas are known) |
+| **Metro 2033** (4A Engine, 2010) | ✅ verified | `content.vfi` + `.vfs` archives (QuickLZ); levels (`level` + `level.geom_pc`) with all objects from `level.bin` (props, doors, wagons, NPCs) and baked lighting (`level.lmap_pc`); `.model`/`.mesh`/`.skeleton` (static and skinned); `.motion` animations (listed from the skeleton's motion folders, loaded on demand); textures (`.512`/`.1024`/`.2048` → DDS), normals and specular from `_bump` maps, alpha-tested surfaces. `l08_market`: 2 355 objects, 659 models | Detail textures; Metro Redux, Last Light, Exodus (schemas are known) |
 | **Fallout 3 / New Vegas, Skyrim LE/SE** (Gamebryo) | ✅ verified | NIF with skinning, `skeleton.nif` lookup, `.kf` animations (incl. B-spline), BSA archives. FNV: creatures 203/206, characters/armour 839/846 | Skinned `BSTriShape` (Skyrim SE), Havok `.hkx`, FaceGen, Oblivion/Morrowind, Fallout 4 `.ba2` |
 | **GTA V** (RAGE) | ✅ verified on mods | `.ydr`, `.ydd`, `.yft`, `.ytd` (DXT, BC4/5, BC7); peds assembled from components | RPF archives (AES — keys must come from the user), vehicles from `.yft` parts, GTA IV, RDR |
 | **Arma 3 / Arma 2** | ✅ verified on mods | PBO, P3D ODOL v28–75, PAA, rapified `config.bin`; soldiers, uniforms and weapons assembled from config classes | MLOD, animations (`.rtm`) |
@@ -59,12 +59,13 @@ Each engine declares its own export targets and settings; the export dialog show
 | Start screen with game/format search; auto-detection by file signature | ✅ | Opening a file from another game switches the game automatically |
 | Game folders, archives, drag and drop, resource search | ✅ | Archives: BSA, PAK/PK3/PK4, VPK, IMG, VIV/BIG, PBO, ZIP, X-Ray `.db`, Metro `content.vfi` |
 | Scene layers: level geometry and objects grouped by class, visibility toggles | ✅ | Hidden items are not exported |
-| Select objects by clicking in the scene, rotate map objects | 🟡 | Moving objects, undo, saving scene edits — planned |
+| Select objects by clicking in the scene, move and rotate map objects | 🟡 | Undo and saving scene edits — planned; moved objects are exported with their new poses |
 | Orbit and free-fly (WASD) camera, cut-away from above | ✅ | |
 | Textures, normal maps, PBR (roughness/metalness/AO), wireframe, skeleton | ✅ | Normal and PBR maps found from materials or by file name |
 | Skeletal and vertex animation playback | ✅ | Speed, loop, scrubbing |
 | Error diagnostics (format, signature, hex dump to clipboard) | ✅ | |
-| Popup and side panel, interface translations (EN/RU), light theme | ⬜ | |
+| Interface in English and Russian, switchable on the fly | 🟡 | Default follows the browser language; model details and format error messages are still Russian only |
+| Popup and side panel, light theme | ⬜ | |
 | Large open levels (5–10 M triangles) | 🟡 | Work but are heavy; instanced trees and distance culling planned |
 
 ## Build and install
@@ -105,7 +106,7 @@ On Windows, e2e tests need an installed Chromium or Chrome: `set CHROMIUM_PATH=C
 1. Pick a game or format on the start screen (search is available), or drop model files or a game folder onto the window. Switch the game later with the game button at the top left.
 2. **Left panel — resources:** game folder, archives, single models and textures, search across everything opened. Assembled models are listed too: BeamNG `.pc` configurations, Arma `config/…/*.armacfg` classes, MudRunner/SnowRunner `classes/trucks/*.xml` trucks.
 3. **Right panel:** "Scene" (layers with visibility checkboxes; double-click focuses the camera), "Meshes and textures" (pick any texture manually with "…"), "Animation".
-4. **Top bar:** tools "Camera", "Select" (V) and "Rotate" (R, or ⟲/⟳ 90°), camera "Orbit"/"Fly" (WASD, E/Q up/down, Shift faster), the "View" menu, "Info" and "Export…". F focuses the selection, Esc clears it.
+4. **Top bar:** tools "Camera", "Select" (V), "Move" (G: drag along the floor, Ctrl — up/down) and "Rotate" (R, or ⟲/⟳ 90°), camera "Orbit"/"Fly" (WASD, E/Q up/down, Shift faster), the "View" menu, "Info" and "Export…". F focuses the selection, Esc clears it.
 5. **Export…** lists where the opened model can go, with settings for each target.
 6. If loading fails, "Copy diagnostics" puts the format, signature and a hex dump of the header on the clipboard.
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRegistry, type ExportContext, type Model } from '../src/index';
 import { allEngines } from '../src/engines/index';
-import { applyPlacement, instanceAt, pickRay, rotatePlacement, sceneLeaves, sceneTree, visibleIndices } from '../src/core/scene';
+import { applyPlacement, instanceAt, pickRay, rotatePlacement, sceneLeaves, sceneTree, translatePlacement, visibleIndices } from '../src/core/scene';
 import { exportObj } from '../src/core/writers/obj';
 
 /** Сцена: меш «пол» (квадрат 10×10 в XZ на y=0) и меш объектов с двумя экземплярами треугольника-прототипа. */
@@ -43,6 +43,9 @@ describe('сцена: слои, видимость, поворот, выбор �
     // (1, 0, 0) · Ry(90°): x' = x·cos − z·sin = 0, z' = x·sin + z·cos = 1 -> (2, 0, 1)
     const p = Array.from(m.meshes[1]!.pos.subarray(3, 6));
     expect(p[0]).toBeCloseTo(2); expect(p[2]).toBeCloseTo(1);
+    translatePlacement(m, 1, [1, 0.5, 0]);
+    expect(Array.from(m.meshes[1]!.pos.subarray(9, 12))).toEqual([-1, 0.5, 1]);
+    expect(m.instances!.placements[1]!.pose.slice(12, 15)).toEqual([-1, 0.5, 1]);
     m.instances!.placements[1]!.hidden = true;
     expect(Array.from(visibleIndices(m, 1))).toEqual([0, 1, 2]);
     expect(Array.from(visibleIndices(m, 0))).toEqual([0, 2, 1, 0, 3, 2]);

@@ -1,10 +1,13 @@
 // Стартовое окно: карточки игр и форматов по группам, поиск; выбор пускает в просмотр.
-import type { GamePreset } from 'gmv';
+import { presetText, type GamePreset } from 'gmv';
+import { t } from './i18n';
 
 export interface StartScreen {
   show(current: string | null, canGoBack?: boolean): void;
   hide(): void;
   readonly visible: boolean;
+  /** Перерисовать (после смены языка). */
+  refresh(): void;
 }
 
 export function createStartScreen(root: HTMLElement, grid: HTMLElement, filter: HTMLInputElement, back: HTMLButtonElement, games: readonly GamePreset[], onPick: (id: string) => void): StartScreen {
@@ -13,29 +16,30 @@ export function createStartScreen(root: HTMLElement, grid: HTMLElement, filter: 
     const q = filter.value.trim().toLowerCase();
     grid.textContent = '';
     for (const group of [...new Set(games.map((g) => g.group))]) {
-      const list = games.filter((g) => g.group === group && (!q || `${g.title} ${g.id} ${g.hint ?? ''}`.toLowerCase().includes(q)));
+      const list = games.filter((g) => { const x = presetText(g); return g.group === group && (!q || `${x.title} ${g.title} ${g.id} ${x.hint}`.toLowerCase().includes(q)); });
       if (!list.length) continue;
       const h = document.createElement('h3');
-      h.textContent = group;
+      h.textContent = presetText(list[0]!).group;
       const box = document.createElement('div');
       box.className = 'cards';
       for (const g of list) {
         const b = document.createElement('button');
         b.className = 'card' + (g.id === last ? ' last' : '');
         b.dataset.game = g.id;
-        b.title = g.hint ?? '';
-        const t = document.createElement('b');
-        t.textContent = g.title;
-        if (g.status && g.status !== 'stable') { const s = document.createElement('span'); s.className = 'badge'; s.textContent = g.status === 'beta' ? 'бета' : 'мост'; t.append(s); }
+        const x = presetText(g);
+        b.title = x.hint;
+        const ttl = document.createElement('b');
+        ttl.textContent = x.title;
+        if (g.status && g.status !== 'stable') { const s = document.createElement('span'); s.className = 'badge'; s.textContent = t(g.status === 'beta' ? 'badge.beta' : 'badge.bridge'); ttl.append(s); }
         const sub = document.createElement('small');
-        sub.textContent = g.id === last ? 'последняя выбранная' : (g.hint ?? '').split(/[.;]/)[0]!.slice(0, 80);
-        b.append(t, sub);
+        sub.textContent = g.id === last ? t('start.last') : x.hint.split(/[.;]/)[0]!.slice(0, 80);
+        b.append(ttl, sub);
         b.onclick = () => onPick(g.id);
         box.append(b);
       }
       grid.append(h, box);
     }
-    if (!grid.childElementCount) grid.textContent = 'Ничего не найдено';
+    if (!grid.childElementCount) grid.textContent = t('start.none');
   };
   filter.oninput = render;
   filter.onkeydown = (e) => {
@@ -55,6 +59,7 @@ export function createStartScreen(root: HTMLElement, grid: HTMLElement, filter: 
       filter.focus();
     },
     hide,
+    refresh: () => { if (!root.hidden) render(); },
     get visible() { return !root.hidden; },
   };
 }

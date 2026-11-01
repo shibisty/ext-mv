@@ -18,17 +18,28 @@ export const metroEngine = defineEngine({
       sniff: (h) => (h[0] === 1 && h[4] === 4 && h[8] === 16 && h[9] === 0 && h[10] === 0 ? 1 : 0),
       load: async (main, ctx) => (await import('./level')).loadMetroLevel(main, ctx),
       resolveTexture: async (mesh, _model, lib) => (await import('./level')).resolveMetroTexture(mesh.texture, lib),
+      resolveMaps: async (mesh, _model, lib) => (await import('./level')).resolveMetroMaps(mesh.texture, lib),
     },
     {
       id: 'metro-model',
       title: '4A: модель (.model, .mesh + .skeleton)',
       engine: 'metro',
       extensions: ['model', 'mesh'],
+      motionExtensions: ['motion'],
       status: 'beta',
       // первый чанк — 0x01 заголовок (64 байта) или 0x09 меши
       sniff: (h) => ((h[0] === 1 && h[4] === 64 && h[1] === 0 && h[5] === 0) || (h[0] === 9 && h[1] === 0 && h[2] === 0 && h[3] === 0) ? 1 : 0),
       load: async (main, ctx) => (await import('./model')).loadMetroModel(main, ctx),
+      // анимации скелета из того же архива (motions/<папка из .skeleton>): список, данные — при выборе
+      afterLoad: async (ctx) => {
+        const arc = ctx.main.archive, path = ctx.main.path ?? '';
+        if (!arc || !ctx.model.loadMotions) return;
+        const { listMetroMotions, meshesRoot } = await import('./model'), root = meshesRoot(path).replace(/meshes\/$/, '');
+        const list = listMetroMotions(ctx.model, arc, root);
+        if (list.length) ctx.addMotions(list, 'motions');
+      },
       resolveTexture: async (mesh, _model, lib) => (await import('./level')).resolveMetroTexture(mesh.texture, lib),
+      resolveMaps: async (mesh, _model, lib) => (await import('./level')).resolveMetroMaps(mesh.texture, lib),
     },
   ],
   archives: [

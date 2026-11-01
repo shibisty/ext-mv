@@ -107,6 +107,22 @@ export interface Mesh {
   normalImage?: DecodedImage;
   /** PBR-поверхность: шероховатость, металличность, AO, блик (карты и множители). */
   surface?: SurfaceInfo;
+  /** Прозрачность по альфе текстуры «вырезанием» (решётки, листва, наклейки) — независимо от общего переключателя. */
+  alphaTest?: boolean;
+  /** Служебная геометрия (световые плоскости, экраны-рендер-цели): по умолчанию скрыта. */
+  defaultHidden?: boolean;
+  /** Второй набор UV — координаты в карте освещения (Model.lightmap). */
+  uv2?: Float32Array;
+}
+
+/** Запечённое освещение уровня (одна карта на модель): яркость в R, UV — Mesh.uv2. */
+export interface Lightmap {
+  width: number;
+  height: number;
+  /** Яркость, 1 байт на пиксель. */
+  data: Uint8Array;
+  /** Множитель яркости при показе. */
+  scale?: number;
 }
 
 /** Ключи анимации assimp-стиля: [время, значение]. */
@@ -125,6 +141,8 @@ interface MotionBase {
   frames?: number;
   /** Откуда анимация: 'model' или имя файла. */
   source?: string;
+  /** Анимация из длинного списка (Metro: тысячи файлов): данные читаются при выборе. */
+  load?(): Promise<Motion>;
 }
 /** Анимация узлов (assimp, NIF, MD5, PSA, Cast, GoldSrc). */
 export interface NodeMotion extends MotionBase {
@@ -194,6 +212,8 @@ export interface Model {
   meshes: Mesh[];
   /** Экземпляры моделей внутри сцены (Metro level.bin). */
   instances?: InstancedScene;
+  /** Карта освещения уровня (Metro level.lmap_pc). */
+  lightmap?: Lightmap;
   skeleton: SkeletonRuntime | null;
   motions: Motion[];
   bounds: Bounds;

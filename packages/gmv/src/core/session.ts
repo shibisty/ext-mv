@@ -1,10 +1,11 @@
 // Сессия просмотра без DOM: выбранный пресет, архивы, текстуры, модель и анимации.
 // Интерфейс (расширение, страница, другое приложение) подписывается на события и рисует результат.
+import { tr } from './i18n';
 import { baseName, extOf, toArrayBuffer } from './binary';
 import { analyzeNormalMap, normalCandidates, type NormalPacking } from './normals';
 import { composeSurface, surfaceCandidates, surfaceMaps } from './surface';
 import { openFolder } from './archives/folder';
-import type { AfterLoadContext, FormatPlugin, GamePreset, LoadContext } from './plugin';
+import type { AfterLoadContext, EngineMaps, FormatPlugin, GamePreset, LoadContext } from './plugin';
 import type { Registry } from './registry';
 import { TextureLibrary, type TextureSource } from './textures';
 import { MotionOnlyError, type Archive, type ArchiveEntry, type BlobFile, type DecodedImage, type Mesh, type Model, type Motion, type VFile } from './types';
@@ -61,6 +62,16 @@ export class ViewerSession {
   /** Последняя неудачная загрузка (для кнопки «Скопировать диагностику»). */
   lastFailure: { file: VFile; format: string; error: string } | null = null;
   private readonly overrides = new Map<number, TextureSource>();
+  /** Карты движка (resolveMaps) по имени текстуры меша. */
+  private readonly mapsCache = new Map<string, Promise<EngineMaps | null>>();
+  private engineMaps(mesh: Mesh): Promise<EngineMaps | null> {
+    const fmt = this.format, model = this.model;
+    if (!fmt?.resolveMaps || !model) return Promise.resolve(null);
+    const key = `${mesh.texture}|${mesh.shader ?? ''}`;
+    let p = this.mapsCache.get(key);
+    if (!p) { p = fmt.resolveMaps(mesh, model, this.textures).catch((e) => { console.warn(e); return null; }); this.mapsCache.set(key, p); }
+    return p;
+  }
   private readonly listeners = new Map<keyof SessionEvents, Set<Listener<never>>>();
 
   constructor(readonly registry: Registry, presetId?: string | null) {
@@ -116,23 +127,23 @@ export class ViewerSession {
       try {
         const plugin = await this.registry.archiveFor(f);
         if (!plugin) continue; // спутник (.dir) или неизвестный формат
-        this.status(`Чтение архива ${f.name}…`);
+        this.status(tr('session.readingArchive', { name: f.name }));
         const a = await plugin.open(f, files);
         if (a) this.archives.push(a);
       } catch (e) {
         console.error(e);
-        this.status('Ошибка архива: ' + errMsg(e), true);
+        this.status(tr('session.archiveError', { error: errMsg(e) }), true);
         return;
       }
     }
-    this.archivesChanged(`Архивов: ${this.archives.length}`);
+    this.archivesChanged(tr('session.archives', { n: this.archives.length }));
   }
 
   /** «Папка игры»: индексирует файлы без чтения. */
   addFolder(files: readonly BlobFile[]): Archive {
     const a = openFolder(files);
     this.archives.push(a);
-    this.archivesChanged(`Папка «${a.name}»: файлов ${a.entries.length}`);
+    this.archivesChanged(tr('session.folder', { name: a.name, n: a.entries.length }));
     return a;
   }
 
@@ -155,13 +166,13 @@ export class ViewerSession {
       const { textures, errors } = await plugin.parse(await file.arrayBuffer());
       for (const t of textures) this.textures.addDecoded(t.name, t, plugin.id);
       this.status(
-        `${plugin.id.toUpperCase()} ${file.name}: текстур ${textures.length}${errors.length ? ', ошибок ' + errors.length + ' (' + errors[0] + ')' : ''}`,
+        tr('session.dict', { id: plugin.id.toUpperCase(), name: file.name, n: textures.length }) + (errors.length ? tr('session.dictErrors', { n: errors.length, first: errors[0]! }) : ''),
         errors.length > 0 && !textures.length,
       );
       this.emit('textures', undefined);
     } catch (e) {
       console.error(e);
-      this.status(`Ошибка ${plugin.id.toUpperCase()}: ${errMsg(e)}`, true);
+      this.status(tr('session.dictError', { id: plugin.id.toUpperCase(), error: errMsg(e) }), true);
     }
   }
 
@@ -180,25 +191,26 @@ export class ViewerSession {
       const p = this.registry.presetForFormat(format.id, main.name);
       if (p) this.setPreset(p.id);
     }
-    if (!main || !format) { this.status('Нет файла модели, подходящего под выбранный формат', true); return null; }
-    this.status('Загрузка…');
+    if (!main || !format) { this.status(tr('session.noModel'), true); return null; }
+    this.status(tr('session.loading'));
     try {
       const model = await format.load(main, this.loadContext(files, main));
       model.normalY ??= this.registry.engine(format.engine)?.normalY ?? 'dx';
       this.model = model; this.format = format; this.main = main; this.lastFailure = null;
       this.overrides.clear();
+      this.mapsCache.clear();
       this.motions.length = 0;
       this.motions.push(...model.motions.map((m) => ({ ...m, source: 'model' })));
       this.emit('model', { model, main, format });
       if (format.afterLoad) await format.afterLoad(this.afterLoadContext(main, model));
       this.emit('motions', this.motions);
-      this.status(`Загружено: ${main.name}`);
+      this.status(tr('session.loaded', { name: main.name }));
       return model;
     } catch (e) {
       if (e instanceof MotionOnlyError && this.model?.loadMotions) { await this.loadMotions(main); return this.model; }
       console.error(e);
       this.lastFailure = { file: main, format: format.id, error: errMsg(e) };
-      this.status('Ошибка: ' + errMsg(e), true);
+      this.status(tr('session.error', { error: errMsg(e) }), true);
       return null;
     }
   }
@@ -238,18 +250,18 @@ export class ViewerSession {
   /** Добавить внешние анимации к загруженной модели. */
   async loadMotions(file: VFile | BlobFile): Promise<Motion[]> {
     if (!this.model?.loadMotions) {
-      this.status('Сначала загрузите модель, поддерживающую внешние анимации', true);
+      this.status(tr('session.noMotionModel'), true);
       return [];
     }
     try {
       const list = await this.model.loadMotions(file);
       this.motions.push(...list.map((m) => ({ ...m, source: file.name })));
       this.emit('motions', this.motions);
-      this.status(`Добавлено анимаций: ${list.length} (${file.name})`);
+      this.status(tr('session.motionsAdded', { n: list.length, name: file.name }));
       return list;
     } catch (e) {
       console.error(e);
-      this.status('Ошибка анимации: ' + errMsg(e), true);
+      this.status(tr('session.motionError', { error: errMsg(e) }), true);
       return [];
     }
   }
@@ -285,12 +297,12 @@ export class ViewerSession {
     const model = this.model, mesh = model?.meshes[i];
     if (!model || !mesh) return { meshIndex: i, image: null, label: '', ok: false };
     const src = await this.findTextureSource(model, mesh, i);
-    if (!src) return { meshIndex: i, image: null, label: mesh.texture ? 'нет файла' : '', ok: false };
+    if (!src) return { meshIndex: i, image: null, label: mesh.texture ? tr('tex.noFile') : '', ok: false };
     try {
       const image = await this.textures.decode(src);
       return { meshIndex: i, image, label: `${image.width}×${image.height}`, ok: true, source: src.path ?? src.name };
     } catch (e) {
-      return { meshIndex: i, image: null, label: 'ошибка: ' + errMsg(e), ok: false };
+      return { meshIndex: i, image: null, label: tr('tex.error', { error: errMsg(e) }), ok: false };
     }
   }
 
@@ -301,6 +313,8 @@ export class ViewerSession {
   async resolveNormal(i: number, diffuse?: string): Promise<NormalResult> {
     const mesh = this.model?.meshes[i], none: NormalResult = { meshIndex: i, image: null, packing: 'rgb', label: '', ok: false };
     if (!mesh) return none;
+    const em = (await this.engineMaps(mesh))?.normal;
+    if (em) return { meshIndex: i, image: em.image, packing: em.packing ?? 'rgb', label: em.label ?? `N ${em.image.width}×${em.image.height}`, ok: true };
     // явно заданные (встроенная, из материала) принимаются без проверки «похожести»; найденные по имени — проверяются
     const tried: Array<[() => TextureSource | null, boolean]> = [];
     if (mesh.normalImage) tried.push([() => ({ name: 'embedded', decoded: mesh.normalImage, arrayBuffer: async () => new ArrayBuffer(0) }), true]);
@@ -320,7 +334,7 @@ export class ViewerSession {
         return { meshIndex: i, image, packing: a.packing, label: `N ${image.width}×${image.height}${a.packing !== 'rgb' ? ' ' + a.packing.toUpperCase() : ''}`, ok: true };
       } catch { /* битый файл — пробуем следующий */ }
     }
-    return mesh.normalMap ? { ...none, label: 'N нет файла' } : none;
+    return mesh.normalMap ? { ...none, label: tr('tex.normalNoFile') } : none;
   }
 
   /**
@@ -330,6 +344,8 @@ export class ViewerSession {
   async resolveSurface(i: number, diffuse?: string): Promise<SurfaceResult> {
     const mesh = this.model?.meshes[i], none: SurfaceResult = { meshIndex: i, image: null, label: '', ok: false };
     if (!mesh) return none;
+    const es = (await this.engineMaps(mesh))?.surface;
+    if (es) return { meshIndex: i, image: es.image, label: es.label ?? 'PBR', ok: true };
     const variants = [...(mesh.surface ? [mesh.surface] : []), ...surfaceCandidates(diffuse ?? '').concat(diffuse !== mesh.texture ? surfaceCandidates(mesh.texture) : [])];
     for (const [k, s] of variants.entries()) {
       const explicit = k === 0 && !!mesh.surface;
@@ -343,7 +359,7 @@ export class ViewerSession {
       if (!images.size && !(explicit && factors)) continue;
       const image = composeSurface(s, images);
       const parts = [s.metallic && 'M', (s.roughness || s.gloss) && 'R', s.ao && 'AO', s.specular && 'S'].filter(Boolean).join('·');
-      return { meshIndex: i, image, label: `PBR${parts ? ' ' + parts : ''}${images.size ? '' : ' (множители)'}`, ok: true };
+      return { meshIndex: i, image, label: `PBR${parts ? ' ' + parts : ''}${images.size ? '' : tr('tex.pbrFactors')}`, ok: true };
     }
     return none;
   }

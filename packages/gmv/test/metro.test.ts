@@ -7,7 +7,7 @@ import { decodeDDS } from '../src/core/images/dds';
 import { createRegistry } from '../src/index';
 import { allEngines } from '../src/engines/index';
 import { file } from './helpers/bin';
-import { makeMetroConfig, makeMetroLevel, makeSkinnedModel, makeStaticModel, makeVfi, metroEntity, packLevelBin, quicklzCompress, IDENT } from './helpers/metro';
+import { makeMotion, makeMetroConfig, makeMetroLevel, makeSkinnedModel, makeStaticModel, makeVfi, metroEntity, packLevelBin, quicklzCompress, IDENT } from './helpers/metro';
 import { metroEntities, parseMetroConfig, cfgGet } from '../src/engines/metro/config';
 import { metroModelFromData, readMetroModel } from '../src/engines/metro/model';
 import { placeLevelObjects } from '../src/engines/metro/objects';
@@ -169,5 +169,53 @@ describe('4A Engine (Metro 2033)', () => {
     expect(placed.pos[v * 3 + 1]).toBeCloseTo(1, 4);
     expect(placed.pos[v * 3 + 2]).toBeCloseTo(-4 - k * sn, 4);
     expect(report.join('\n')).toMatch(/Объекты уровня: 3 экземпляров, 1 моделей.*зеркальных 1/);
+  });
+
+  it('анимация .motion: кости по маске скелета, сопряжённый кватернион, позиция по ключам; список из архива с ленивой загрузкой', async () => {
+    const sk = makeSkinnedModel(), s45 = Math.SQRT1_2;
+    // a_child (кость 0 в файле): поворот 90° (как в скелете) -> 180° вокруг Y (кватернион в файле — сопряжённый), root (1): высота 1 -> 2
+    const motion = makeMotion(0x1234, 2, 3, [
+      { bone: 0, rot: [[0, -s45, 0, s45], [0, -Math.sin(3 * Math.PI / 8), 0, Math.cos(3 * Math.PI / 8)], [0, -1, 0, 0]], pos: [[1, 0, 0]], small3: true },
+      { bone: 1, rot: [[0, 0, 0, 1]], pos: [[0, 1, 0], [0, 1.5, 0], [0, 2, 0]] },
+    ]);
+    const { vfi, vfs } = makeVfi([
+      { path: 'content\\meshes\\dynamic\\test\\guy.model', data: sk.model }, { path: 'content\\meshes\\dynamic\\test\\body.mesh', data: sk.mesh },
+      { path: 'content\\meshes\\dynamic\\test\\rig.skeleton', data: sk.skeleton }, { path: 'content\\motions\\test\\rig\\walk.motion', data: motion, compress: true },
+      { path: 'content\\motions\\other\\x.motion', data: motion },
+    ]);
+    const s = new ViewerSession(createRegistry(allEngines), 'metro2033');
+    await s.addArchives([file(vfi, 'content.vfi'), file(vfs, 'data.vfs0')]);
+    const a = s.archives[0]!, m = (await s.loadModel([a.fileOf(a.lookup('meshes/dynamic/test/guy.model')!)]))!;
+    // список: только папка скелета, данные ещё не прочитаны
+    expect(s.motions.map((x) => x.name)).toEqual(['walk']);
+    expect(s.motions[0]!.load).toBeTypeOf('function');
+    const mo = await s.motions[0]!.load!();
+    expect([mo.duration, mo.frames]).toEqual([2 / 30, 3]);
+    const sk2 = m.skeleton!;
+    sk2.pose(mo, 0, false);
+    for (const v of sk2.skinV) v.forEach((x, k) => expect(x).toBeCloseTo(k % 5 === 0 ? 1 : 0, 3));
+    sk2.pose(mo, 2 / 30, false);
+    // root поднялся на 1; a_child повёрнут на 180° вокруг Y: его ось X смотрит в −X
+    expect(sk2.worldV[0]![13]).toBeCloseTo(2, 3);
+    const w = sk2.worldV[1]!;
+    expect([w[0], w[2]].map((x) => +x!.toFixed(3) + 0)).toEqual([-1, 0]);
+    expect(w[13]).toBeCloseTo(2, 3);
+    // анимация другого скелета не принимается
+    await expect(m.loadMotions!(file(makeMotion(0x9999, 2, 1, [{ bone: 0, rot: [[0, 0, 0, 1]], pos: [[0, 0, 0]] }]), 'x.motion'))).rejects.toThrow(/другого скелета/);
+  });
+
+  it('карты _bump: нормали из высоты (альфа, Y как в DirectX), блик из зелёного', async () => {
+    const { metroBumpMaps } = await import('../src/engines/metro/level');
+    // 4×4: высота растёт вправо (по X), блик 200
+    const rgba = new Uint8Array(64);
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) { const o = (y * 4 + x) * 4; rgba[o + 1] = 200; rgba[o + 3] = [0, 85, 170, 255][x]!; }
+    const r = metroBumpMaps({ width: 4, height: 4, rgba })!;
+    const n = r.normal!.image.rgba!, sf = r.surface!.image.rgba!;
+    // пиксель (1, 1): подъём вправо -> нормаль наклонена влево (X < 0.5), по Y ровно
+    expect(n[(1 * 4 + 1) * 4]).toBeLessThan(127);
+    expect(Math.abs(n[(1 * 4 + 1) * 4 + 1]! - 128)).toBeLessThanOrEqual(1);
+    expect(n[(1 * 4 + 1) * 4 + 2]).toBeGreaterThan(128);
+    expect([sf[0], sf[2], sf[3]]).toEqual([255, 0, 200]);
+    expect(sf[1]).toBe(Math.round((1 - 0.7 * 200 / 255) * 255));
   });
 });

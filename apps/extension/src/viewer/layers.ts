@@ -1,6 +1,7 @@
 // Слои сцены: дерево (геометрия, объекты по классам, меши), видимость галочками, выбор строки.
 // Дочерние строки создаются при раскрытии группы; длинные группы показываются порциями.
 import { sceneLeaves, type SceneNode } from 'gmv';
+import { t } from './i18n';
 
 const PAGE = 300;
 
@@ -59,7 +60,7 @@ export function createLayers(box: HTMLElement, h: LayersHandlers): LayersView {
     cb.type = 'checkbox';
     const [c, ind] = checkState(n);
     cb.checked = c; cb.indeterminate = ind;
-    cb.title = 'Показать / скрыть';
+    cb.title = t('layers.toggle');
     cb.onclick = (e) => e.stopPropagation();
     cb.onchange = () => {
       h.setVisible(leaves(n), cb.checked);
@@ -98,7 +99,7 @@ export function createLayers(box: HTMLElement, h: LayersHandlers): LayersView {
         more.className = 'more';
         more.style.paddingLeft = `${34 + depth * 12}px`;
         const b = document.createElement('button');
-        b.textContent = `ещё ${Math.min(PAGE, kids.length - lim)} из ${kids.length - lim}`;
+        b.textContent = t('layers.more', { n: Math.min(PAGE, kids.length - lim), left: kids.length - lim });
         b.onclick = () => { shown.set(n.id, lim + PAGE); render(); };
         more.append(b);
         box.append(more);
@@ -135,7 +136,7 @@ export function createLayers(box: HTMLElement, h: LayersHandlers): LayersView {
       }
       if (changed) render();
       const r = rows.get(id);
-      if (r) { r.classList.add('cur'); r.scrollIntoView({ block: 'nearest' }); }
+      if (r) { r.classList.add('cur'); r.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
     },
     syncLeaf(id) {
       const n = byId.get(id);

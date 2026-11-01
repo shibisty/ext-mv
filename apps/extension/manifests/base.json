@@ -1,13 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "Game Model Viewer",
+  "name": "__MSG_appName__",
   "version": "12.0.0",
-  "description": "WebGL-просмотрщик моделей игр: X-Ray, Bethesda, GTA, id Tech, Valve, Unreal, CoD, NFS, CryEngine и др., форматы assimp.",
+  "description": "__MSG_appDesc__",
+  "default_locale": "en",
   "action": {
-    "default_title": "Открыть Game Model Viewer",
-    "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+    "default_title": "__MSG_actionTitle__",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
   },
-  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   }
