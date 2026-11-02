@@ -1,9 +1,9 @@
 // Общая обвязка архива: индексы путей и текстур, «файл-подобные» объекты записей.
 import { baseName, stripExt, toArrayBuffer } from '../binary';
-import type { Archive, ArchiveEntry, VFile } from '../types';
+import type { Archive, ArchiveEntry, BlobFile, VFile } from '../types';
 
 /** Расширения, по которым запись попадает в индекс текстур (путь без расширения). */
-export const TEXTURE_RE = /\.(dds|tga|png|jpe?g|pcx|bmp|webp|paa|pac|pct)$/;
+export const TEXTURE_RE = /\.(dds|tga|png|jpe?g|pcx|bmp|webp|paa|pac|pct|tex)$/;
 
 export interface ArchiveSpec<E extends ArchiveEntry> {
   name: string;
@@ -22,6 +22,8 @@ export interface ArchiveSpec<E extends ArchiveEntry> {
   keepFirstTextureKey?: boolean;
   /** Своё содержимое файла (без копии через read). */
   fileBytes?(entry: E): Promise<ArrayBuffer>;
+  /** Исходный файл записи (папка). */
+  blobOf?(entry: E): BlobFile | null;
 }
 
 export function createArchive<E extends ArchiveEntry>(spec: ArchiveSpec<E>): Archive {
@@ -42,6 +44,7 @@ export function createArchive<E extends ArchiveEntry>(spec: ArchiveSpec<E>): Arc
     byBase: spec.byBase,
     lookup: (p) => (spec.lookup ? spec.lookup(p) : (index.get(p) as E | undefined) ?? null),
     read: (e) => spec.read(e as E),
+    blobOf: spec.blobOf ? (e) => spec.blobOf!(e as E) : undefined,
     fileOf(e) {
       let f = files.get(e);
       if (!f) {

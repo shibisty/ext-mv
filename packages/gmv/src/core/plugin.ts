@@ -66,6 +66,8 @@ export interface ArchivePlugin {
   extensions: string[];
   /** Расширения файлов-спутников (.dir для IMG, части VPK), которые не открываются сами по себе. */
   companionExtensions?: string[];
+  /** Открывать такие архивы автоматически, когда выбрана «Папка игры» (F.E.A.R. Online: десятки *.arch01 рядом с Game/). */
+  openFromFolder?: boolean;
   sniff?(head: Uint8Array, name: string): number;
   /** null — файл является частью другого архива (например, *_001.vpk) и пропускается. */
   open(file: BlobFile, siblings: readonly BlobFile[]): Promise<Archive | null>;

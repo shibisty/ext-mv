@@ -29,6 +29,7 @@ export function openFolder(files: readonly BlobFile[]): Archive {
     lookup: (p) => full.get(p) ?? bySuffix.get(p) ?? null,
     read: async (e) => new Uint8Array(await e.src.arrayBuffer()),
     fileBytes: (e) => e.src.arrayBuffer(),
+    blobOf: (e) => e.src,
     displayName: (e) => e.src.name,
     keepFirstTextureKey: true,
     // ключи по всем суффиксам пути: a/b/c, b/c, c — без привязки к корню папки

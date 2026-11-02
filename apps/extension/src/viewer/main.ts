@@ -458,7 +458,7 @@ input('fileModel').onchange = () => void session.addFiles(filesOf('fileModel'));
 input('fileOmf').onchange = async () => { for (const f of filesOf('fileOmf')) await session.loadMotions(f); };
 input('fileTex').onchange = () => void session.addFiles(filesOf('fileTex'));
 input('fileTexDir').onchange = () => session.addTextures(filesOf('fileTexDir'));
-input('fileFolder').onchange = () => { session.addFolder(filesOf('fileFolder')); };
+input('fileFolder').onchange = async () => { const a = session.addFolder(filesOf('fileFolder')); await session.openFolderArchives(a); };
 input('fileArch').onchange = () => void session.addArchives(filesOf('fileArch'));
 input('fileMeshTex').onchange = () => {
   const f = filesOf('fileMeshTex')[0];
@@ -477,6 +477,7 @@ attachDrop(window, $('drop'), async ({ files, folders }) => {
   enterViewer();
   for (const list of folders) {
     const a = session.addFolder(list as BlobFile[]);
+    await session.openFolderArchives(a);
     // одна модель в папке — сразу открыть
     const models = a.entries.filter((e) => session.modelExtensions.some((x) => e.path.endsWith('.' + x)));
     if (models.length === 1 && !files.length) await session.openEntry({ archive: a, entry: models[0]! });

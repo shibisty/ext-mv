@@ -122,21 +122,30 @@ export class ViewerSession {
     for (const f of mot) await this.loadMotions(f);
   }
 
+  /**
+   * Открыть архивы. Файл, который не читается (не архив — например, зашифрованные a3.Arch01 F.E.A.R. Online, — повреждён),
+   * пропускается — остальные открываются;
+   * в строке состояния — сколько открыто и что пропущено.
+   */
   async addArchives(files: readonly BlobFile[]): Promise<void> {
+    const skipped: string[] = [];
+    let opened = 0;
     for (const f of files) {
       try {
         const plugin = await this.registry.archiveFor(f);
         if (!plugin) continue; // спутник (.dir) или неизвестный формат
         this.status(tr('session.readingArchive', { name: f.name }));
         const a = await plugin.open(f, files);
-        if (a) this.archives.push(a);
+        if (a) { this.archives.push(a); opened++; }
       } catch (e) {
         console.error(e);
-        this.status(tr('session.archiveError', { error: errMsg(e) }), true);
-        return;
+        skipped.push(`${f.name}: ${errMsg(e)}`);
       }
     }
-    this.archivesChanged(tr('session.archives', { n: this.archives.length }));
+    if (skipped.length) {
+      this.archivesChanged(tr('session.archivesSkipped', { n: this.archives.length, k: skipped.length, list: skipped.slice(0, 3).join('; ') + (skipped.length > 3 ? '…' : '') }));
+      if (!opened) this.status(tr('session.archiveError', { error: skipped.slice(0, 3).join('; ') }), true);
+    } else this.archivesChanged(tr('session.archives', { n: this.archives.length }));
   }
 
   /** «Папка игры»: индексирует файлы без чтения. */
@@ -145,6 +154,30 @@ export class ViewerSession {
     this.archives.push(a);
     this.archivesChanged(tr('session.folder', { name: a.name, n: a.entries.length }));
     return a;
+  }
+
+  /**
+   * Архивы внутри «Папки игры», которые движок просит открывать сразу (ArchivePlugin.openFromFolder): F.E.A.R. Online — *.arch01.
+   * Возвращает число открытых архивов.
+   */
+  async openFolderArchives(folder: Archive): Promise<number> {
+    if (!folder.blobOf) return 0;
+    const exts = new Set(this.registry.archives.filter((a) => a.openFromFolder).flatMap((a) => a.extensions));
+    const files: BlobFile[] = [];
+    for (const e of folder.entries) {
+      if (!exts.has(extOf(e.path))) continue;
+      const f = folder.blobOf(e);
+      // то же расширение может быть у архивов другого движка (.db X-Ray) — их не трогаем
+      const plugin = f ? await this.registry.archiveFor(f) : null;
+      if (!f || !plugin?.openFromFolder) continue;
+      // файлы с тем же расширением, но не архивы (F.E.A.R. Online: зашифрованные a3.Arch01…) — пропускаем
+      if (plugin.sniff && !plugin.sniff(new Uint8Array(await f.slice(0, 64).arrayBuffer()), f.name)) continue;
+      files.push(f);
+    }
+    if (!files.length) return 0;
+    const before = this.archives.length;
+    await this.addArchives(files);
+    return this.archives.length - before;
   }
 
   private archivesChanged(msg: string): void {

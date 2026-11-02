@@ -164,7 +164,7 @@ interface GpuMesh {
   /** Индексы на GPU (скрытые экземпляры — вырожденные треугольники). */
   idx: Uint16Array | Uint32Array;
   norm: WebGLTexture | null; normPack: NormalPacking; surf: WebGLTexture | null;
-  bPos: WebGLBuffer; bNor: WebGLBuffer; bUV: WebGLBuffer; bBone: WebGLBuffer; bWt: WebGLBuffer; bTan: WebGLBuffer; bIdx: WebGLBuffer; bUV2: WebGLBuffer;
+  bPos: WebGLBuffer; bNor: WebGLBuffer; bUV: WebGLBuffer; bBone: WebGLBuffer | null; bWt: WebGLBuffer | null; bTan: WebGLBuffer; bIdx: WebGLBuffer; bUV2: WebGLBuffer | null;
   vao: WebGLVertexArrayObject; vaoW?: WebGLVertexArrayObject; bLine?: WebGLBuffer; lineCount?: number;
 }
 interface LineVao { vao: WebGLVertexArrayObject; buf: WebGLBuffer }
@@ -236,8 +236,12 @@ export class Renderer {
     return b;
   }
   private attribs(m: GpuMesh): void {
-    const gl = this.gl, sets: Array<[WebGLBuffer, number]> = [[m.bPos, 3], [m.bNor, 3], [m.bUV, 2], [m.bBone, 4], [m.bWt, 4], [m.bTan, 4], [m.bUV2, 2]];
-    sets.forEach(([b, n], i) => { gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, n, gl.FLOAT, false, 0, 0); });
+    const gl = this.gl, sets: Array<[WebGLBuffer | null, number]> = [[m.bPos, 3], [m.bNor, 3], [m.bUV, 2], [m.bBone, 4], [m.bWt, 4], [m.bTan, 4], [m.bUV2, 2]];
+    // без скелета кости и веса, без второго UV — постоянные значения атрибутов, а не буферы (уровни: миллионы вершин)
+    sets.forEach(([b, n], i) => {
+      if (b) { gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, n, gl.FLOAT, false, 0, 0); }
+      else { gl.disableVertexAttribArray(i); if (i === 4) gl.vertexAttrib4f(i, 1, 0, 0, 0); else gl.vertexAttrib4f(i, 0, 0, 0, 0); }
+    });
   }
 
   /** Освободить GPU-ресурсы текущей модели. */
@@ -270,8 +274,9 @@ export class Renderer {
     this.clear();
     for (const d of model.meshes) {
       const bPos = this.buf(gl.ARRAY_BUFFER, d.pos), bNor = this.buf(gl.ARRAY_BUFFER, d.nor), bUV = this.buf(gl.ARRAY_BUFFER, d.uv);
-      const bBone = this.buf(gl.ARRAY_BUFFER, d.bone), bWt = this.buf(gl.ARRAY_BUFFER, d.weight), bTan = this.buf(gl.ARRAY_BUFFER, computeTangents(d));
-      const bUV2 = this.buf(gl.ARRAY_BUFFER, d.uv2 ?? new Float32Array(d.vertexCount * 2));
+      const skin = !!model.skeleton;
+      const bBone = skin ? this.buf(gl.ARRAY_BUFFER, d.bone) : null, bWt = skin ? this.buf(gl.ARRAY_BUFFER, d.weight) : null, bTan = this.buf(gl.ARRAY_BUFFER, computeTangents(d));
+      const bUV2 = d.uv2 ? this.buf(gl.ARRAY_BUFFER, d.uv2) : null;
       const vao = gl.createVertexArray()!;
       const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
         bPos, bNor, bUV, bBone, bWt, bTan, bUV2, vao, bIdx: null as unknown as WebGLBuffer };

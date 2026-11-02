@@ -25,7 +25,7 @@ for (const root of args) {
       }
     };
     await walk(root);
-    s.addFolder(files);
+    await s.openFolderArchives(s.addFolder(files));
   } else arcs.push(new File([await openAsBlob(root)], basename(root)));
 }
 // архивы — одним набором: индексу (.vfi, .dir) нужны соседние файлы данных
@@ -50,7 +50,8 @@ if (kf) {
 }
 if (s.motions.length) console.log("Анимации:", s.motions.map((x, i) => `${i}:${x.name} (${x.duration.toFixed(2)} с)`).slice(0, 20).join(', '));
 if (motionSel && m.skeleton) {
-  const mo = s.motions.find((x) => x.name === motionSel) ?? s.motions[+motionSel];
+  let mo = s.motions.find((x) => x.name === motionSel) ?? s.motions[+motionSel];
+  if (mo?.load) mo = await mo.load(); // анимации из длинных списков читаются при выборе
   if (mo) { m.skeleton.pose(mo, time, true); console.log(`Поза: ${mo.name} @ ${time} с`); } else console.error(`Нет анимации ${motionSel}`);
 }
 if (ppm) { renderPPM(m, ppm, { tex, zUp: !!m.defaultZUp, yaw, pitch, clipY: clipY ? +clipY : undefined, W: size ? +size : undefined, H: size ? +size : undefined }); console.log('Картинка:', ppm); }

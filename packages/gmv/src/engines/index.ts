@@ -16,11 +16,13 @@ import { armaEngine } from './arma';
 import { rageEngine } from './rage';
 import { spintiresEngine } from './spintires';
 import { metroEngine } from './metro';
+import { lithtechEngine } from './lithtech';
+import { vostokEngine } from './vostok';
 import { assimpEngine } from './assimp';
 
-export { coreEngine, xrayEngine, gamebryoEngine, renderwareEngine, hplEngine, idtechEngine, unrealEngine, valveEngine, castEngine, eaEngine, cryengineEngine, beamngEngine, armaEngine, rageEngine, spintiresEngine, metroEngine, assimpEngine };
+export { coreEngine, xrayEngine, gamebryoEngine, renderwareEngine, hplEngine, idtechEngine, unrealEngine, valveEngine, castEngine, eaEngine, cryengineEngine, beamngEngine, armaEngine, rageEngine, spintiresEngine, metroEngine, lithtechEngine, vostokEngine, assimpEngine };
 
 /** Порядок задаёт порядок пресетов в списке. */
 export const allEngines: readonly EnginePlugin[] = [
-  coreEngine, xrayEngine, gamebryoEngine, renderwareEngine, hplEngine, idtechEngine, unrealEngine, valveEngine, castEngine, eaEngine, cryengineEngine, beamngEngine, armaEngine, rageEngine, spintiresEngine, metroEngine, assimpEngine,
+  coreEngine, xrayEngine, gamebryoEngine, renderwareEngine, hplEngine, idtechEngine, unrealEngine, valveEngine, castEngine, eaEngine, cryengineEngine, beamngEngine, armaEngine, rageEngine, spintiresEngine, metroEngine, lithtechEngine, vostokEngine, assimpEngine,
 ];

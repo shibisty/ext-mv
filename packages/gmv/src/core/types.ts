@@ -52,6 +52,8 @@ export interface Archive {
   lookup(path: string): ArchiveEntry | null;
   read(entry: ArchiveEntry): Promise<Uint8Array>;
   fileOf(entry: ArchiveEntry): VFile;
+  /** Исходный файл записи (только «Папка игры»): чтобы открыть лежащий в папке архив. */
+  blobOf?(entry: ArchiveEntry): BlobFile | null;
 }
 
 /** Канал карты: путь/имя файла и номер канала (0 R, 1 G, 2 B, 3 A). */

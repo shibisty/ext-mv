@@ -21,6 +21,8 @@ Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Detailed plan with p
 |---|---|---|---|
 | **S.T.A.L.K.E.R.** SoC, CS, CoP (X-Ray) | ✅ verified | OGF v4 models with skeletons and animations (internal and external `.omf`, body-part motions mapped via `S_SMPARAMS`, 3- and 4-weight vertices); `.db`/`.xdb` archives (LZHUF tables, LZO files); compiled levels (`level` + `level.geom`); SDK sources (`.object`, `.level` scenes). Checked: OGF 935/935 (SoC), 641/641 (CS), 914/914 (CoP); all 30 SoC levels | Encrypted SoC archives (`gamedata.db*`) — use an unpacked `gamedata` folder; blending legs + torso animations; compressed tree positions in levels |
 | **Metro 2033** (4A Engine, 2010) | ✅ verified | `content.vfi` + `.vfs` archives (QuickLZ); levels (`level` + `level.geom_pc`) with all objects from `level.bin` (props, doors, wagons, NPCs) and baked lighting (`level.lmap_pc`); `.model`/`.mesh`/`.skeleton` (static and skinned); `.motion` animations (listed from the skeleton's motion folders, loaded on demand); textures (`.512`/`.1024`/`.2048` → DDS), normals and specular from `_bump` maps, alpha-tested surfaces. `l08_market`: 2 355 objects, 659 models | Detail textures; Metro Redux, Last Light, Exodus (schemas are known) |
+| **F.E.A.R. Online** (LithTech Jupiter EX) | 🟡 verified | **Archives:** `.arch01` (LTAR v3), opened automatically from the game folder; non-archives next to them (`a3.Arch01`…) are skipped.<br>**Models:** `.mdl` + `.mesh` (most detailed LOD, all pieces), `.tex` textures, `.mat` materials (diffuse, normal, specular) assigned from the game database `Game/database/Loki.gamedb`, a folder-based fallback without it; pieces with an empty material slot in the database (a player's mask placeholder) are hidden.<br>**Skeletons and animations:** `.anim` tracks; animation sets are found automatically — next to the model, in `anim/` subfolders (players: `Game/charf/…/anim/1st`, `3rd`…), shared AI sets `char/ai/global/*/anims`; sets are read when an animation is picked; any other set — «+ .mdl».<br>**Levels:** `Game/worlds/…/*.wld` — `.wldmsh` geometry by material for all streaming regions, `.inst` prefabs placed as objects (layer «Objects»).<br>**Checked:** 201 textured models from 6 archives; 599 character/weapon models with skeletons and animations (player `tf_m_01`: 5537 animations from 41 sets; 69 of 91 AI characters get shared sets); all 19 levels (up to 2 M triangles and 9235 prefabs; `pve_runaway` opens in the browser in ~3 s) | Moving level objects (WorldModel: doors, windows, fans) are not placed — the link between their geometry and their positions was not found; their geometry is recognised and hidden (layer «WorldModel · …», lies at the map origin), prefabs attached to them are not shown. Lights and other server objects, lightmaps, `.wld` BSP/physics; sounds and footsteps in animation keys; 6 leftover `.mdl` files of versions 37/38/40; props used only by levels have no materials in the database (shown untextured); F.E.A.R. 1/2/3 (`.Arch00`, `Model00p`) |
+| **Survarium** (Vostok Engine) | 🟡 verified | `resources.NN.db` archives with updates applied on top (deleted and linked files), model folders `*.model` / `*.skinned_model` (near LOD, all parts), `.material` instances (albedo, normal, smoothness, metalness), DDS textures, skeletons and skinning, `.b-spline` animations (listed for the opened model, loaded on demand). Checked on buildings, props, weapons (reload with the magazine coming out) and character parts | Assembling a character from parts, levels, vertex normals from the file (recomputed from geometry for now) |
 | **Fallout 3 / New Vegas, Skyrim LE/SE** (Gamebryo) | ✅ verified | NIF with skinning, `skeleton.nif` lookup, `.kf` animations (incl. B-spline), BSA archives. FNV: creatures 203/206, characters/armour 839/846 | Skinned `BSTriShape` (Skyrim SE), Havok `.hkx`, FaceGen, Oblivion/Morrowind, Fallout 4 `.ba2` |
 | **GTA V** (RAGE) | ✅ verified on mods | `.ydr`, `.ydd`, `.yft`, `.ytd` (DXT, BC4/5, BC7); peds assembled from components | RPF archives (AES — keys must come from the user), vehicles from `.yft` parts, GTA IV, RDR |
 | **Arma 3 / Arma 2** | ✅ verified on mods | PBO, P3D ODOL v28–75, PAA, rapified `config.bin`; soldiers, uniforms and weapons assembled from config classes | MLOD, animations (`.rtm`) |
@@ -40,7 +42,7 @@ Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Detailed plan with p
 | **Gothic 1–2** (ZenGin), **Build engine**, **Dark Engine**, **Godot** | ⬜ | — | Open, well-documented formats — next in line |
 | **BioWare** Aurora, Odyssey (KotOR), Eclipse | ⬜ | — | Shared KEY/BIF/ERF/GFF layer, then MDL/MDX, TPC |
 | **Unity** | ⬜ | — | UnityFS bundles, TypeTree, meshes, textures, skinned renderers |
-| Frostbite, RED Engine, Decima, Anvil, Fox, Dunia, Divinity, Genome, LithTech | ⬜ | — | Mostly via bridges from community tools; native support later |
+| Frostbite, RED Engine, Decima, Anvil, Fox, Dunia, Divinity, Genome, older LithTech (NOLF, F.E.A.R. 1) | ⬜ | — | Mostly via bridges from community tools; native support later |
 
 ### Export (send a model or level to another game or editor)
 
@@ -57,8 +59,8 @@ Each engine declares its own export targets and settings; the export dialog show
 | Feature | Status | Notes |
 |---|---|---|
 | Start screen with game/format search; auto-detection by file signature | ✅ | Opening a file from another game switches the game automatically |
-| Game folders, archives, drag and drop, resource search | ✅ | Archives: BSA, PAK/PK3/PK4, VPK, IMG, VIV/BIG, PBO, ZIP, X-Ray `.db`, Metro `content.vfi` |
-| Scene layers: level geometry and objects grouped by class, visibility toggles | ✅ | Hidden items are not exported |
+| Game folders, archives, drag and drop, resource search | ✅ | Archives: BSA, PAK/PK3/PK4, VPK, IMG, VIV/BIG, PBO, ZIP, X-Ray `.db`, Metro `content.vfi`, F.E.A.R. Online `.arch01`, Survarium `resources.*.db`; for F.E.A.R. Online and Survarium the archives inside a chosen game folder open automatically; when several archives are selected at once, files that cannot be read (not an archive, damaged) are skipped and listed in the status line, the rest open |
+| Scene layers: level geometry and objects grouped by class, visibility toggles | ✅ | Hidden items are not exported; service geometry (unplaced F.E.A.R. Online WorldModels, empty-slot pieces, light planes) starts hidden |
 | Select objects by clicking in the scene, move and rotate map objects | 🟡 | Undo and saving scene edits — planned; moved objects are exported with their new poses |
 | Orbit and free-fly (WASD) camera, cut-away from above | ✅ | |
 | Textures, normal maps, PBR (roughness/metalness/AO), wireframe, skeleton | ✅ | Normal and PBR maps found from materials or by file name |
@@ -66,7 +68,7 @@ Each engine declares its own export targets and settings; the export dialog show
 | Error diagnostics (format, signature, hex dump to clipboard) | ✅ | |
 | Interface in English and Russian, switchable on the fly | 🟡 | Default follows the browser language; model details and format error messages are still Russian only |
 | Popup and side panel, light theme | ⬜ | |
-| Large open levels (5–10 M triangles) | 🟡 | Work but are heavy; instanced trees and distance culling planned |
+| Large open levels (5–10 M triangles) | 🟡 | Work but are heavy; models without a skeleton skip bone/weight buffers on the GPU; instanced trees and distance culling planned |
 
 ## Build and install
 
@@ -104,7 +106,7 @@ On Windows, e2e tests need an installed Chromium or Chrome: `set CHROMIUM_PATH=C
 ## Using the viewer
 
 1. Pick a game or format on the start screen (search is available), or drop model files or a game folder onto the window. Switch the game later with the game button at the top left.
-2. **Left panel — resources:** game folder, archives, single models and textures, search across everything opened. Assembled models are listed too: BeamNG `.pc` configurations, Arma `config/…/*.armacfg` classes, MudRunner/SnowRunner `classes/trucks/*.xml` trucks.
+2. **Left panel — resources:** game folder, archives, single models and textures, search across everything opened. Assembled models are listed too: BeamNG `.pc` configurations, Arma `config/…/*.armacfg` classes, MudRunner/SnowRunner `classes/trucks/*.xml` trucks. For F.E.A.R. Online and Survarium choose the whole game folder: the archives inside open by themselves (F.E.A.R. Online levels are the `Game/worlds/…/*.wld` files).
 3. **Right panel:** "Scene" (layers with visibility checkboxes; double-click focuses the camera), "Meshes and textures" (pick any texture manually with "…"), "Animation".
 4. **Top bar:** tools "Camera", "Select" (V), "Move" (G: drag along the floor, Ctrl — up/down) and "Rotate" (R, or ⟲/⟳ 90°), camera "Orbit"/"Fly" (WASD, E/Q up/down, Shift faster), the "View" menu, "Info" and "Export…". F focuses the selection, Esc clears it.
 5. **Export…** lists where the opened model can go, with settings for each target.

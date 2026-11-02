@@ -14,6 +14,7 @@ const MSG: Record<string, { ru: string; en: string }> = {
   'session.readingArchive': { ru: 'Чтение архива {name}…', en: 'Reading archive {name}…' },
   'session.archiveError': { ru: 'Ошибка архива: {error}', en: 'Archive error: {error}' },
   'session.archives': { ru: 'Архивов: {n}', en: 'Archives: {n}' },
+  'session.archivesSkipped': { ru: 'Архивов: {n}; пропущено файлов: {k} ({list})', en: 'Archives: {n}; files skipped: {k} ({list})' },
   'session.folder': { ru: 'Папка «{name}»: файлов {n}', en: 'Folder "{name}": {n} files' },
   'session.dict': { ru: '{id} {name}: текстур {n}', en: '{id} {name}: {n} textures' },
   'session.dictErrors': { ru: ', ошибок {n} ({first})', en: ', {n} errors ({first})' },
