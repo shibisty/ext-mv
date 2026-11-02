@@ -8,12 +8,43 @@
 import { createArchive, readRange } from '../../core/archives/common';
 import type { Archive, ArchiveEntry, BlobFile } from '../../core/types';
 
-interface DbEntry extends ArchiveEntry { file: BlobFile | null; off: number; size: number }
+interface DbEntry extends ArchiveEntry { file: BlobFile | null; off: number; size: number; text?: string }
 
 const DB_RE = /^resources\.(\d+)\.db$/i;
 export const MODEL_DIR_RE = /\.(skinned_)?model$/;
 /** Содержимое записи-папки модели: метка + путь. */
 export const MODEL_MARK = 'VOSTOK-MODEL\n';
+/** Комплект персонажа: метка + папки частей по строке. */
+export const OUTFIT_MARK = 'VOSTOK-OUTFIT\n';
+/** Уровень: метка + путь client_project. */
+export const LEVEL_MARK = 'VOSTOK-LEVEL\n';
+
+const OUTFIT_EXTRA = ['boot', 'hand', 'helmet', 'mask', 'back'];
+
+/**
+ * Комплекты персонажей: в models/character/<раса>/<папка>/ части «<комплект>_torso_s1», «…_legs_s1», «…_boot», «…_hand»…
+ * (s1–s3 — размер, _prem — вариант). Запись «<комплект>[_prem]_sN.outfit» перечисляет части и голову (head_default,
+ * с шлемом — head_default_helmet, с маской — head_default_mask).
+ */
+export function outfitEntries(paths: ReadonlySet<string>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const p of paths) {
+    const m = /^(models\/character\/([^/]+)\/[^/]+)\/(.+?)_(torso|legs)_(s\d)(_prem)?\.skinned_model$/.exec(p);
+    if (!m || m[4] !== 'torso') continue;
+    const [, folder, race, set, , size, prem = ''] = m;
+    const legs = `${folder}/${set}_legs_${size}${prem}.skinned_model`;
+    const parts = [p, ...(paths.has(legs) ? [legs] : [])];
+    for (const x of OUTFIT_EXTRA) { const d = `${folder}/${set}_${x}.skinned_model`; if (paths.has(d)) parts.push(d); }
+    if (race === 'human') {
+      const hasHelmet = parts.some((d) => d.endsWith('_helmet.skinned_model')), hasMask = parts.some((d) => d.endsWith('_mask.skinned_model'));
+      const head = `models/character/human/head/head_default${hasMask ? '_mask' : hasHelmet ? '_helmet' : ''}.skinned_model`;
+      if (paths.has(head)) parts.push(head);
+      else if (paths.has('models/character/human/head/head_default.skinned_model')) parts.push('models/character/human/head/head_default.skinned_model');
+    }
+    out.set(`${folder}/${set}${prem}_${size}.outfit`, parts);
+  }
+  return out;
+}
 
 export interface DbNode { path: string; flags: number; size: number; off: number }
 
@@ -65,13 +96,21 @@ export async function openVostokDb(file: BlobFile, siblings: readonly BlobFile[]
     if (m) dirs.add(m[1]!);
   }
   for (const d of dirs) if (!map.has(d)) map.set(d, { path: d, size: 0, file: null, off: 0 });
+  const virt = new Map<string, string>();
+  for (const [path, parts] of outfitEntries(dirs)) virt.set(path, OUTFIT_MARK + parts.join('\n'));
+  // уровни: projects/<уровень>/<режим>/client_project -> projects/<уровень>/<режим>.vlevel
+  for (const p of map.keys()) {
+    const m = /^(projects\/[^/]+\/[^/]+)\/client_project$/.exec(p);
+    if (m) virt.set(`${m[1]}.vlevel`, LEVEL_MARK + p);
+  }
+  for (const [path, text] of virt) if (!map.has(path)) map.set(path, { path, size: 0, file: null, off: 0, text });
   return createArchive<DbEntry>({
     name: dbs.length > 1 ? `${dbs[0]!.name} … ${dbs[dbs.length - 1]!.name}` : file.name,
     kind: 'vostok-db',
     version: 1,
     entries: [...map.values()],
     async read(e) {
-      if (!e.file) return new TextEncoder().encode(MODEL_MARK + e.path);
+      if (!e.file) return new TextEncoder().encode(e.text ?? MODEL_MARK + e.path);
       return readRange(e.file, e.off, e.off + e.size);
     },
   });

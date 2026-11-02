@@ -9,11 +9,11 @@ export const vostokEngine = defineEngine({
   formats: [
     {
       id: 'vostok-model',
-      title: 'Survarium: модель (папка *.model / *.skinned_model)',
+      title: 'Survarium: модель (папка *.model / *.skinned_model), комплект персонажа (*.outfit), уровень (*.vlevel)',
       engine: 'vostok',
-      extensions: ['model', 'skinned_model'],
+      extensions: ['model', 'skinned_model', 'outfit', 'vlevel'],
       status: 'beta',
-      sniff: (h) => (String.fromCharCode(...h.subarray(0, 13)) === 'VOSTOK-MODEL\n' ? 1 : 0),
+      sniff: (h) => (String.fromCharCode(...h.subarray(0, 7)) === 'VOSTOK-' ? 1 : 0),
       load: async (main, ctx) => (await import('./model')).loadVostokModel(main, ctx),
       afterLoad: async (ctx) => {
         const arc = ctx.main.archive;
@@ -41,7 +41,7 @@ export const vostokEngine = defineEngine({
       title: 'Survarium (2015)',
       engine: 'vostok',
       formats: ['vostok-model'],
-      hint: 'Откройте папку game (или выберите все resources.*.db — обновления подключатся поверх) и выберите папку модели models/…/*.model или *.skinned_model.',
+      hint: 'Откройте папку game (или выберите все resources.*.db — обновления подключатся поверх) и выберите папку модели models/…/*.model или *.skinned_model, комплект персонажа models/character/…/*.outfit (части + голова) или уровень projects/<уровень>/<режим>.vlevel.',
       ui,
       status: 'beta',
       markers: ['resources.00.db'],

@@ -39,42 +39,44 @@ export function makeVostokDb(files: Record<string, Uint8Array | 'deleted' | { li
   return b.toU8();
 }
 
-export type Cfg = { [k: string]: Cfg | string | number };
+export type Cfg = { [k: string]: Cfg | CfgArr | string | number | number[] };
+export type CfgArr = Array<Cfg | string | number | number[]>;
 
 /** Двоичный конфиг: таблицы (0x30), строки (0x50), целые (0x10). */
 export function makeVostokConfig(root: Cfg): Uint8Array {
-  const nodes: Array<{ name: string; v: Cfg | string | number; at: number }> = [];
-  const b = new Bin(), strings: Array<[number, string]> = [];
-  // раскладка: узлы таблицы подряд, дети — после
-  const place = (t: Cfg, at: number) => {
-    const kids = Object.entries(t), start = nodes.length;
-    for (const [k, v] of kids) nodes.push({ name: k, v, at: 0 });
-    return { start, n: kids.length, at };
-  };
-  const tables: Array<{ t: Cfg; idx: number }> = [];
-  nodes.push({ name: '', v: root, at: 0 });
-  tables.push({ t: root, idx: 0 });
+  // узлы контейнеров (таблицы — объекты, массивы — 0x40) подряд, дети — после; массив из 3 чисел — f32×3 (0x70)
+  type V = Cfg | CfgArr | string | number | number[];
+  const isVec = (v: V): v is number[] => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+  const isCont = (v: V) => typeof v === 'object' && !isVec(v);
+  const nodes: Array<{ name: string; v: V }> = [{ name: '', v: root }];
   const childStart = new Map<number, number>();
-  for (let q = 0; q < tables.length; q++) {
-    const { t, idx } = tables[q]!;
-    const { start } = place(t, 0);
+  const queue: number[] = [0];
+  for (let q = 0; q < queue.length; q++) {
+    const idx = queue[q]!, v = nodes[idx]!.v as Cfg | CfgArr, start = nodes.length;
+    const kids: Array<[string, V]> = Array.isArray(v) ? v.map((x) => ['', x as V]) : Object.entries(v) as Array<[string, V]>;
     childStart.set(idx, start);
-    Object.values(t).forEach((v, i) => { if (typeof v === 'object') tables.push({ t: v, idx: start + i }); });
+    for (const [k, x] of kids) nodes.push({ name: k, v: x });
+    kids.forEach(([, x], i) => { if (isCont(x)) queue.push(start + i); });
   }
+  const b = new Bin(), strings: Array<[number, string]> = [], vecs: Array<[number, number[]]> = [];
   b.zeros(nodes.length * 16);
-  const str = (s: string) => { const o = b.length; b.cstr(s); return o; };
+  const str = (x: string) => { const o = b.length; b.cstr(x); return o; };
   nodes.forEach((n, i) => {
-    const o = i * 16, nameOff = i ? str(n.name) : 0;
-    if (typeof n.v === 'object') { b.patchU32(o, childStart.get(i)! * 16); b.patchU32(o + 4, 0x30 << 8 | (Object.keys(n.v).length << 16)); }
-    else if (typeof n.v === 'string') { strings.push([o, n.v]); b.patchU32(o + 4, 0x50 << 8 | ((n.v.length + 1) << 16)); }
-    else { b.patchI32(o, n.v); b.patchU32(o + 4, 0x10 << 8 | (4 << 16)); }
-    if (i) b.patchU32(o + 8, nameOff);
+    const o = i * 16, nameOff = i && n.name ? str(n.name) : 0;
+    const v = n.v;
+    if (isVec(v)) { vecs.push([o, v]); b.patchU32(o + 4, 0x70 << 8 | (12 << 16)); }
+    else if (Array.isArray(v)) { b.patchU32(o, childStart.get(i)! * 16); b.patchU32(o + 4, 0x40 << 8 | (v.length << 16)); }
+    else if (typeof v === 'object') { b.patchU32(o, childStart.get(i)! * 16); b.patchU32(o + 4, 0x30 << 8 | (Object.keys(v).length << 16)); }
+    else if (typeof v === 'string') { strings.push([o, v]); b.patchU32(o + 4, 0x50 << 8 | ((v.length + 1) << 16)); }
+    else if (Number.isInteger(v)) { b.patchI32(o, v); b.patchU32(o + 4, 0x10 << 8 | (4 << 16)); }
+    else { const f = new DataView(new ArrayBuffer(4)); f.setFloat32(0, v, true); b.patchU32(o, f.getUint32(0, true)); b.patchU32(o + 4, 0x20 << 8 | (4 << 16)); }
+    if (nameOff) b.patchU32(o + 8, nameOff);
   });
-  for (const [o, s] of strings) b.patchU32(o, str(s));
+  for (const [o, x] of strings) b.patchU32(o, str(x));
+  for (const [o, x] of vecs) { const at = b.length; b.f32s(...x); b.patchU32(o, at); }
   return b.toU8();
 }
 
-/** converted_model: вершины по 28 байт (позиция, 3×4 байта упакованных векторов, UV 2×f16), индексы u16. */
 export function makeConvertedModel(pos: number[][], uvHalf: Array<[number, number]>, idx: number[]): Uint8Array {
   const b = new Bin().u32(3).u32(4 + pos.length * 28).u32(pos.length);
   pos.forEach((p, i) => b.f32s(...p).u32(0x3f008080).u32(0x3f008080).u32(0x3f008080).u16(uvHalf[i]![0]).u16(uvHalf[i]![1]));
@@ -102,5 +104,15 @@ export function makeBSpline(channels: Array<{ knots: number[]; values: number[] 
 export function makeBindPose(bones: Array<{ name: string; pos: number[]; euler?: number[] }>): Uint8Array {
   const b = new Bin().u16(bones.length);
   for (const x of bones) b.cstr(x.name).f32s(...x.pos).f32s(...(x.euler ?? [0, 0, 0])).f32s(1, 1, 1);
+  return b.toU8();
+}
+
+/** Слой травы .veg: чанк 78 (маска — здесь пустая), 88 — позиции, 89 — нормали. */
+export function makeVeg(pos: number[][], nor: number[][]): Uint8Array {
+  const b = new Bin().u32(78).u32(12).u32(0).u32(2048).u32(0);
+  b.u32(88).u32(pos.length * 12);
+  for (const p of pos) b.f32s(...p);
+  b.u32(89).u32(nor.length * 12);
+  for (const n of nor) b.f32s(...n);
   return b.toU8();
 }
