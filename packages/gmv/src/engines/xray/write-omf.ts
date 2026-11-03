@@ -22,6 +22,10 @@ export interface OmfMotionDef {
   speed?: number; power?: number; accrue?: number; falloff?: number;
   /** Метки (шаги и т. п.): имя и интервалы [начало, конец] в секундах. */
   marks?: Array<{ name: string; intervals: Array<[number, number]> }>;
+  /** Дополнительные имена того же движения. Движок X-Ray нумерует движения по порядку описаний (`m_cycle[name] = mot_i`,
+   *  поле «номер движения» описания не читается), поэтому писатель разворачивает псевдонимы в полные копии движения
+   *  (ключи дублируются в файле); описание-ссылка на чужие ключи движок читать не умеет (net1198). */
+  aliases?: string[];
 }
 export interface OmfInput {
   /** Имена костей в порядке треков (порядок костей модели). */
@@ -98,7 +102,12 @@ function isConstTrans(t: XrayTrack, frames: number): boolean {
   return true;
 }
 
-export function writeOMF(input: OmfInput): Uint8Array {
+export function writeOMF(input0: OmfInput): Uint8Array {
+  // псевдонимы → отдельные движения с теми же ключами (см. OmfMotionDef.aliases)
+  const input: OmfInput = { ...input0, motions: input0.motions.flatMap(({ motion, def }) => [
+    { motion, def: def ? { ...def, aliases: undefined } : def },
+    ...(def?.aliases ?? []).map((name) => ({ motion: { ...motion, name }, def: { ...def, aliases: undefined } })),
+  ]) };
   const bones = input.bones;
   const parts = input.parts?.length ? input.parts : [{ name: 'default', bones: [...bones] }];
   const trackOf = new Map(bones.map((b, i) => [b.toLowerCase(), i]));

@@ -14,9 +14,9 @@ import { basename, join, relative } from 'node:path';
 import type { BlobFile, XrayMotion, XrayTrack } from '../packages/gmv/src/index';
 import { openDuniaArchive } from '../packages/gmv/src/engines/dunia/fat';
 import { parseMab, parseSkeleton, type MabAnim, type DuniaSkelBone } from '../packages/gmv/src/engines/dunia/mab';
-import { parseOGF } from '../packages/gmv/src/engines/xray/ogf';
+import { parseOGF, parseSMParams, readChunks, OGF } from '../packages/gmv/src/engines/xray/ogf';
 import { XraySkeleton } from '../packages/gmv/src/engines/xray/skeleton';
-import { writeOMF, quantRot } from '../packages/gmv/src/engines/xray/write-omf';
+import { writeOMF, quantRot, ESM, type OmfMotionDef } from '../packages/gmv/src/engines/xray/write-omf';
 
 console.warn = () => {};
 const args = process.argv.slice(2);
@@ -24,6 +24,8 @@ const opt = (n: string, d = '') => { const i = args.indexOf(n); if (i < 0) retur
 const flag = (n: string) => { const i = args.indexOf(n); if (i < 0) return false; args.splice(i, 1); return true; };
 const FC2 = opt('--fc2'), OGFP = opt('--ogf'), CLIPS = opt('--clips', 'hurt/receiving_wound|hmr/health|hurt/revive'), MAP = opt('--map'), OUT = opt('--out', 'out_retarget');
 const PREFIX = opt('--name-prefix', 'fc2_'), REPORT = flag('--report'), LIMIT = parseInt(opt('--limit', '0'), 10);
+const PARTS = opt('--parts'), SLOTS = opt('--slots'); // --parts <stalker_animation.omf>: части тела как у модели; --slots <json>: имена/флаги по правилам
+const ROOT_MOVE = parseFloat(opt('--root-move', '0.3')); // ход корня (м), с которого клип становится root mover (esmRootMover, ход - в корневой кости)
 if (!FC2 || !OGFP) { console.error('нужно --fc2 <Data_Win32> --ogf <модель.ogf>'); process.exit(2); }
 
 // ---------------------------------------------------------------- маленькая линейная алгебра (кватернионы [w,x,y,z], матрицы column-major 4×4)
@@ -66,7 +68,47 @@ const DEFAULT_MAP: Record<string, string> = {
   'R Middle01': 'bip01_r_finger2', 'R Middle02': 'bip01_r_finger21', 'R Middle03': 'bip01_r_finger22',
   'Jaw': 'jaw_1', 'L_Eye': 'eye_left', 'R_Eye': 'eye_right', 'L_Eyelid_U': 'eyelid_1',
 };
-const ROOT_TARGET = 'bip01'; // корень X-Ray: высота и ход персонажа
+const ROOT_TARGET = 'bip01'; // как у родных анимаций: высота таза - в bip01_pelvis, bip01 и корень модели на нуле…
+// …кроме клипов с ходом (root mover): ход и поворот D(k) - в корневой кости модели (root_stalker), её и двигает
+// animation_movement_controller (xrGame), bip01 на нуле, таз - относительно корня.
+
+// ---------------------------------------------------------------- слоты X-Ray: правила «клип FC2 → имя/флаги X-Ray»
+// name: шаблон, {n} - счётчик правила (с from), {1}.. - группы регулярного выражения; part 65535 - всё тело (как у
+// родных critical_hit), иначе номер части из --parts; aliases - ещё имена того же движения (оружейные слоты 1..3 у
+// critical_hit - одни ключи, три описания). Без правила: PREFIX + короткое имя клипа, флаги 0, часть 65535.
+interface SlotRule { match: string; name: string; from?: number; flags?: number; part?: number; aliases?: string[]; lua?: string }
+const SIDE: Record<string, string> = { left: 'legs_left', right: 'legs_right', front: 'legs_left', back: 'legs_right' };
+const UPPER: Record<string, string> = { left: 'hend_left', right: 'hend_right', front: 'torso', back: 'torso' };
+const DEFAULT_SLOTS: SlotRule[] = [
+  // критические попадания FC2 (hurt_critical{up,low}{dir}, с ходом) → norm_{оружие}_critical_hit_{часть}_{n}: как родные
+  // (flags 18 = StopAtEnd|UseFootSteps, всё тело); «up» - торс/руки, «low» - ноги; нумерация с 2 (родные _0, _1)
+  { match: 'hurt_?(?:move)?critical(up|low)(front|back|left|right)', name: 'norm_1_critical_hit_{P}_{n}', from: 2, flags: 18, part: 65535, aliases: ['norm_2_critical_hit_{P}_{n}', 'norm_3_critical_hit_{P}_{n}'] },
+  { match: 'hurtspothead', name: 'norm_1_critical_hit_head_{n}', from: 2, flags: 18, part: 65535, aliases: ['norm_2_critical_hit_head_{n}', 'norm_3_critical_hit_head_{n}'] },
+  // ранение на месте → падение в «раненого» (вход состояния Lua), лёжа - циклы, подъём - выход
+  { match: 'hurtspot(l|r)(up|dwn)', name: 'fc2_fall_{n}', flags: 2, part: 65535, lua: 'into' },
+  { match: 'lying(idle\\d|turn\\d|callph|drawph|fireph)', name: 'fc2_lying_{n}', flags: 0, part: 65535, lua: 'idle' },
+  { match: 'lyingexpire', name: 'fc2_lying_die_{n}', flags: 2, part: 65535 },
+  { match: 'getupmulti|kneerecover', name: 'fc2_getup_{n}', flags: 2, part: 65535, lua: 'out' },
+  { match: 'diehead', name: 'fc2_die_{n}', flags: 2, part: 65535 },
+  { match: 'hurt_minor', name: 'fc2_flinch_{n}', flags: 2, part: 65535 }, // родные damage_ - FX на кости; аддитивный перенос - отдельно
+];
+const slotRules: SlotRule[] = SLOTS ? JSON.parse(readFileSync(SLOTS, 'utf8')) : DEFAULT_SLOTS;
+const slotCount = new Map<string, number>(); // счётчик {n} - на каждое итоговое имя (torso и legs нумеруются отдельно)
+function applySlot(path: string): { name: string; def: OmfMotionDef; lua?: string } | null {
+  for (const r of slotRules) {
+    const m = new RegExp(r.match, 'i').exec(path);
+    if (!m) continue;
+    const sub = (t: string) => {
+      let o = t;
+      if (m[1] && m[2]) o = o.replace('{P}', (m[1].toLowerCase() === 'up' ? UPPER : SIDE)[m[2].toLowerCase()] ?? 'torso');
+      return o.replace(/\{(\d)\}/g, (_, g) => m[Number(g)] ?? '');
+    };
+    const key = sub(r.name), n = slotCount.get(key) ?? (r.from ?? 0); slotCount.set(key, n + 1);
+    const fill = (t: string) => sub(t).replace('{n}', String(n));
+    return { name: fill(r.name), def: { flags: r.flags ?? 0, boneOrPart: r.part ?? 65535, aliases: r.aliases?.map(fill) }, lua: r.lua };
+  }
+  return null;
+}
 
 async function diskFile(path: string, rel: string): Promise<BlobFile> {
   const f = new File([await openAsBlob(path)], basename(path));
@@ -114,7 +156,9 @@ const srcBindW = worldOf(srcPar, srcBindQ, srcBindP), tgtBindW = worldOf(tgtPar,
 const hipAxis = (idx: Map<string, number>, W: Array<{ q: Q; p: V }>, l: string, r: string): V | null => { const a = idx.get(l), b = idx.get(r); if (a === undefined || b === undefined) return null; return [W[a]!.p[0] - W[b]!.p[0], 0, W[a]!.p[2] - W[b]!.p[2]]; };
 const hs = hipAxis(srcIdx, srcBindW, 'L Thigh', 'R Thigh'), ht = hipAxis(tgtIdx, tgtBindW, 'bip01_l_thigh', 'bip01_r_thigh');
 const yaw = hs && ht ? Math.atan2(ht[0], ht[2]) - Math.atan2(hs[0], hs[2]) : 0;
-const G: Q = [Math.cos(yaw / 2), 0, Math.sin(yaw / 2), 0], Gi = conj(G);
+const Gb: Q = [Math.cos(yaw / 2), 0, Math.sin(yaw / 2), 0], Gbi = conj(Gb); // по bind-позе: для опорной позы цели (refW)
+// G для кадров анимации - ниже, после поправки Yb (анимации FC2 стоят не так, как .skeleton: ещё −90° курса)
+let G: Q = Gb, Gi: Q = conj(Gb);
 /** Минимальный поворот, переводящий единичный вектор a в b. */
 const aimQ = (a: V, b: V): Q => {
   const d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -124,8 +168,28 @@ const aimQ = (a: V, b: V): Q => {
 const boneDir = (q: Q): V => qrot(q, [1, 0, 0]);
 // опорная поза цели: bind, довёрнутый так, чтобы оси костей смотрели как у FC2 (в системе X-Ray, после G)
 const srcOf = new Map<number, number>(pairs.map(([si, ti]) => [ti, si]));
-const tgtRefW: Q[] = tgt.map((_, ti) => { const si = srcOf.get(ti); if (si === undefined) return tgtBindW[ti]!.q; return qnorm(qmul(aimQ(boneDir(tgtBindW[ti]!.q), qrot(G, boneDir(srcBindW[si]!.q))), tgtBindW[ti]!.q)); });
-console.log(`совмещение ригов: поворот G ${(yaw * 180 / Math.PI).toFixed(1)}°`);
+const tgtRefW: Q[] = tgt.map((_, ti) => { const si = srcOf.get(ti); if (si === undefined) return tgtBindW[ti]!.q; return qnorm(qmul(aimQ(boneDir(tgtBindW[ti]!.q), qrot(Gb, boneDir(srcBindW[si]!.q))), tgtBindW[ti]!.q)); });
+console.log(`совмещение ригов: поворот G по bind ${(yaw * 180 / Math.PI).toFixed(1)}°`);
+const YAW_OPT = opt('--yaw', ''); // ручная поправка курса анимаций к bind, градусы (иначе - по первому стоячему клипу)
+/** Мировые позы источника в кадре t без дорожки корня (для оценки курса). */
+function srcWorldAt(a: MabAnim, t: number): Array<{ q: Q; p: V }> {
+  const sq: Q[] = srcBindQ.map((q) => q.slice() as Q), sp: V[] = srcBindP.map((p) => p.slice() as V);
+  for (let si = 0; si < src.length; si++) { const q = sampleQ(a, si, t), p = sampleP(a, si, t); if (q) sq[si] = pQ(q); if (p) sp[si] = pV(p); }
+  return worldOf(srcPar, sq, sp);
+}
+/** Курс анимаций FC2 относительно bind .skeleton (Yb): по оси таза стоячего клипа в кадре 0. Складывается в G. */
+function applyBaseYaw(a: MabAnim | null, from: string): void {
+  let yb = 0;
+  if (YAW_OPT) yb = parseFloat(YAW_OPT) * Math.PI / 180;
+  else if (a && hs) {
+    const w = srcWorldAt(a, 0), l = srcIdx.get('L Thigh')!, r = srcIdx.get('R Thigh')!;
+    const ha: V = [w[l]!.p[0] - w[r]!.p[0], w[l]!.p[1] - w[r]!.p[1], w[l]!.p[2] - w[r]!.p[2]];
+    yb = Math.atan2(ha[0], ha[2]) - Math.atan2(hs[0], hs[2]);
+  }
+  const Yb: Q = [Math.cos(yb / 2), 0, Math.sin(yb / 2), 0];
+  G = qnorm(qmul(Gb, conj(Yb))); Gi = conj(G);
+  console.log(`курс анимаций к bind: ${(yb * 180 / Math.PI).toFixed(1)}° (${from}); G для кадров ${(2 * Math.atan2(G[2], G[0]) * 180 / Math.PI).toFixed(1)}°`);
+}
 console.log(`FC2 костей ${src.length}, X-Ray ${tgt.length}, пар ${pairs.length}, ноги ${legRatio.toFixed(3)}`);
 
 // ---------------------------------------------------------------- перенос
@@ -140,7 +204,7 @@ function sampleP(a: MabAnim, b: number, t: number): V | null {
   if (keys) { const f = Math.min(t * a.rate, keys.length - 1), k = Math.floor(f), k2 = Math.min(k + 1, keys.length - 1); return lerp(keys[k] as V, keys[k2] as V, f - k); }
   const c = a.constPos.get(b); return c ? (c as V) : null;
 }
-function retarget(name: string, a: MabAnim): { motion: XrayMotion; report: string } {
+function retarget(name: string, a: MabAnim): { motion: XrayMotion; report: string; rootMover: boolean } {
   const frames = Math.max(2, Math.round(a.duration * FPS) + 1);
   const rot: Int16Array[] = tgt.map(() => new Int16Array(frames * 4));
   const trans: Float32Array[] = tgt.map(() => new Float32Array(frames * 3));
@@ -154,6 +218,10 @@ function retarget(name: string, a: MabAnim): { motion: XrayMotion; report: strin
     return { q: rk, p: pk };
   };
   let minFoot = Infinity, minPelvis = Infinity, maxPelvis = -Infinity;
+  // ход корня за клип (по дорожке корня .mab) - решает, root mover ли это
+  let travel = 0;
+  if (nRoot > 1) { const e = rootAt(a.duration); const d = qrot(conj(r0), [e.p[0] - p0[0], e.p[1] - p0[1], 0]); travel = Math.hypot(d[0], d[1]); }
+  const rootMover = travel >= ROOT_MOVE;
   for (let f = 0; f < frames; f++) {
     const t = Math.min(f / FPS, a.duration);
     // источник: локальные позы кадра (нет ключа - bind), таз - с дорожкой корня D(k) сверху
@@ -162,12 +230,13 @@ function retarget(name: string, a: MabAnim): { motion: XrayMotion; report: strin
     const lpS = sampleP(a, pelvisS, t); // абсолютное положение таза в кадре анимации (Z вверх)
     const hSrc = tgtBindP[rootT >= 0 ? rootT : 0]![1] / (legRatio || 1); // высоты в .skeleton нет (таз в начале координат) - по сталкеру
     const pel: V = lpS ?? [0, 0, hSrc];
-    let D: Q = [1, 0, 0, 0], pelPos: V = pel;
+    let D: Q = [1, 0, 0, 0], pelPos: V = pel, rootRel: V = [0, 0, 0];
     if (nRoot > 0) {
       const r = rootAt(t);
       D = qmul(conj(r0), r.q);
       const dt: V = [r.p[0] - p0[0], r.p[1] - p0[1], r.p[2] - p0[2]];
       const rel = qrot(conj(r0), dt), rp = qrot(D, pel);
+      rootRel = rel;
       pelPos = [rel[0] + rp[0], rel[1] + rp[1], rel[2] + rp[2]];
     }
     sq[pelvisS] = qnorm(qmul(pQ(D), sq[pelvisS]!)); sp[pelvisS] = pV(pelPos);
@@ -175,14 +244,25 @@ function retarget(name: string, a: MabAnim): { motion: XrayMotion; report: strin
     // цель: мировые повороты = G·Δw·G⁻¹·refW для сопоставленных костей; остальные держат локальный bind
     const lq: Q[] = tgtBindQ.map((q) => q.slice() as Q), lp: V[] = tgtBindP.map((p) => p.slice() as V);
     const tw: Q[] = [];
+    // корень модели (root_stalker) и bip01: у root mover корень несёт D(k) и горизонтальный ход, иначе всё на нуле
+    const rootM = tgtPar[rootT]! >= 0 ? tgtPar[rootT]! : rootT; // корневая кость модели (родитель bip01)
+    const pelT = tgtIdx.get('bip01_pelvis') ?? -1;
+    const pw = qrot(G, pV(pelPos)); const pelW: V = [pw[0] * legRatio, pw[1] * legRatio, pw[2] * legRatio]; // таз в мире
+    // корень - только рыскание (курс): объект игры должен оставаться вертикальным (крен/тангаж D(k) падения - в тазу),
+    // иначе XFORM сталкера наклоняется и логика сыплет исключениями (xrFrame fc2_fall_0: «error in stalker…» каждый кадр)
+    const rq: Q = rootMover ? (() => { const fq = qnorm(qmul(G, qmul(pQ(D), Gi))), fw = qrot(fq, [0, 0, 1]), y = Math.atan2(fw[0], fw[2]); return [Math.cos(y / 2), 0, Math.sin(y / 2), 0] as Q; })() : [1, 0, 0, 0];
+    const rtp: V = rootMover ? (() => { const r = qrot(G, pV(rootRel)); return [r[0] * legRatio, 0, r[2] * legRatio] as V; })() : [0, 0, 0];
+    const tp: V[] = tgtBindP.map((p) => p.slice() as V); // мировые позиции для корня/bip01/таза считаем явно
     for (let ti = 0; ti < tgt.length; ti++) {
       const par = tgtPar[ti]!, si = srcOf.get(ti);
-      if (ti === rootT) tw[ti] = qnorm(qmul(G, qmul(pQ(D), Gi)));
-      else if (si !== undefined) tw[ti] = qnorm(qmul(qmul(G, qmul(qmul(srcW[si]!.q, conj(srcBindW[si]!.q)), Gi)), tgtRefW[ti]!));
+      if (ti === rootM) { tw[ti] = rq; lp[ti] = rtp; continue; }
+      if (ti === rootT) { tw[ti] = rq; lp[ti] = [0, 0, 0]; continue; }
+      if (si !== undefined) tw[ti] = qnorm(qmul(qmul(G, qmul(qmul(srcW[si]!.q, conj(srcBindW[si]!.q)), Gbi)), tgtRefW[ti]!)); // G·Δw·Gb⁻¹·refW: слева - G с поправкой курса анимаций, справа - Gb bind-позы (refW построен по Gb)
       else tw[ti] = par < 0 ? tgtBindQ[ti]! : qnorm(qmul(tw[par]!, tgtBindQ[ti]!));
       lq[ti] = par < 0 ? tw[ti]! : qnorm(qmul(conj(tw[par]!), tw[ti]!));
+      if (ti === pelT) { const d: V = [pelW[0] - rtp[0], pelW[1] - rtp[1], pelW[2] - rtp[2]]; lp[ti] = qrot(conj(rq), d); }
     }
-    if (rootT >= 0) { const px = qrot(G, pV(pelPos)); lp[rootT] = [px[0] * legRatio, px[1] * legRatio, px[2] * legRatio]; }
+    void tp;
     // запись + отчёт (мировые высоты стоп и таза)
     const world: Array<{ q: Q; p: V }> = [];
     for (let i = 0; i < tgt.length; i++) {
@@ -197,32 +277,65 @@ function retarget(name: string, a: MabAnim): { motion: XrayMotion; report: strin
   }
   const tracks: XrayTrack[] = tgt.map((_, i) => ({ rot: rot[i]!, trans: trans[i]!, constT: false }));
   const motion: XrayMotion = { kind: 'xray', name, frames, tracks, duration: frames / FPS };
-  return { motion, report: `${name}: кадров ${frames}, стопы min y ${minFoot.toFixed(2)}, таз y ${minPelvis.toFixed(2)}–${maxPelvis.toFixed(2)}` };
+  return { motion, rootMover, report: `${name}: кадров ${frames}, стопы min y ${minFoot.toFixed(2)}, таз y ${minPelvis.toFixed(2)}–${maxPelvis.toFixed(2)}${rootMover ? `, ход ${travel.toFixed(2)} м (root mover)` : ''}` };
 }
 
 // ---------------------------------------------------------------- клипы
 const re = new RegExp(CLIPS, 'i');
 const clips = arc.entries.filter((e) => e.path.toLowerCase().startsWith(HUMAN) && e.path.toLowerCase().endsWith('.mab') && re.test(e.path.slice(HUMAN.length)));
 const picked = LIMIT > 0 ? clips.slice(0, LIMIT) : clips;
+// поправка курса: первый стоячий клип (таз выше 0,6 м в кадре 0, ось таза горизонтальна)
+{
+  let ref: MabAnim | null = null, refName = 'нет стоячего клипа - без поправки';
+  for (const e of picked) {
+    try {
+      const a = parseMab(await arc.read(e));
+      const w = srcWorldAt(a, 0), l = srcIdx.get('L Thigh')!, r = srcIdx.get('R Thigh')!;
+      const pel = sampleP(a, pelvisS, 0), hy = Math.abs(w[l]!.p[1] - w[r]!.p[1]), hxz = Math.hypot(w[l]!.p[0] - w[r]!.p[0], w[l]!.p[2] - w[r]!.p[2]);
+      if (pel && pel[2] > 0.6 && hy < 0.3 * hxz) { ref = a; refName = e.path.slice(HUMAN.length); break; }
+    } catch { /* не разобрался - дальше */ }
+  }
+  applyBaseYaw(ref, refName);
+}
 console.log(`клипов по «${CLIPS}»: ${clips.length}${LIMIT ? `, берём ${picked.length}` : ''}`);
 mkdirSync(OUT, { recursive: true });
-const motions: Array<{ motion: XrayMotion; def: { flags: number; speed: number } }> = [];
+const motions: Array<{ motion: XrayMotion; def: OmfMotionDef }> = [];
 const report: string[] = [];
 const seen = new Set<string>();
+const lua: Record<string, string[]> = { into: [], idle: [], out: [] };
 for (const e of picked) {
-  let short = e.path.slice(HUMAN.length).replace(/\.mab$/i, '').split('/').pop()!;
+  const rel = e.path.slice(HUMAN.length).replace(/\.mab$/i, '');
+  let short = rel.split('/').pop()!;
   short = short.replace(/^(1st|3rd|mul|3d)ge_(fulb|uppb|lowb|syns|synm|gest)_/, '').replace(/_[+-]\d{3}(fw|lt|rt|bk)/, '').replace(/_(nowep|sedea|seade|prak\d)/, '').replace(/_i1$|_l1$|_ph$/, '');
-  let name = (PREFIX + short).toLowerCase().replace(/[^a-z0-9_]/g, '_');
-  for (let k = 2; seen.has(name); k++) name = `${PREFIX}${short}_${k}`.toLowerCase();
+  const slot = applySlot(rel);
+  let name = (slot ? slot.name : PREFIX + short).toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  for (let k = 2; seen.has(name); k++) name = `${slot ? slot.name : PREFIX + short}_${k}`.toLowerCase();
   seen.add(name);
   try {
     const a = parseMab(await arc.read(e));
     const r = retarget(name, a);
-    motions.push({ motion: r.motion, def: { flags: 0, speed: 1 } });
-    report.push(r.report);
+    const def: OmfMotionDef = slot ? { ...slot.def } : { flags: 0, boneOrPart: 65535 };
+    if (r.rootMover) def.flags = (def.flags ?? 0) | ESM.ROOT_MOVER;
+    motions.push({ motion: r.motion, def });
+    if (slot?.lua) lua[slot.lua]!.push(name);
+    report.push(r.report + (slot ? ` ← ${rel}` : ''));
   } catch (err) { report.push(`! ${e.path}: ${(err as Error).message}`); }
 }
-const omf = writeOMF({ bones: tgt.map((b) => b.name), motions });
+// части тела - как у модели (из её набора .omf): тогда part в описаниях и partition совпадают с родными
+let parts: Array<{ name: string; bones: string[] }> | undefined;
+if (PARTS) {
+  const pb = readFileSync(PARTS), pab = pb.buffer.slice(pb.byteOffset, pb.byteOffset + pb.byteLength) as ArrayBuffer;
+  const pc = readChunks(pab, 0, pab.byteLength).find((x) => x.id === OGF.S_SMPARAMS);
+  const sm = pc ? parseSMParams(pab, pc) : null;
+  if (sm) parts = sm.parts.map((p) => ({ name: p.name, bones: p.bones.filter((b) => tgtIdx.has(b.toLowerCase())) }));
+}
+const omf = writeOMF({ bones: tgt.map((b) => b.name), parts, motions });
+// состояние «раненый» для state_mgr_animation_list.script (xr_wounded): вход - падение, цикл - лёжа, выход - подъём
+if (lua.idle!.length) {
+  const L = (xs: string[]) => xs.map((x) => `"${x}"`).join(', ');
+  const st = `\t\twounded_fc2 = { prop = { maxidle = 5, sumidle = 10, rnd = 70 },\n\t\t\tinto = { [0] = {${L(lua.into!.length ? lua.into! : [lua.idle![0]!])}} },\n\t\t\tout = { [0] = {${L(lua.out!.length ? lua.out! : [lua.idle![0]!])}} },\n\t\t\tidle = { [0] = "${lua.idle![0]}" },\n\t\t\trnd = { [0] = {${L(lua.idle!.slice(1))}} } },\n`;
+  writeFileSync(join(OUT, 'state_mgr_animation_list_fc2.lua'), '-- вставить в таблицу animations state_mgr_animation_list.script (net1195); выбор состояния - wounded_state = wounded_fc2 в логике\n' + st);
+}
 const omfPath = join(OUT, `${PREFIX.replace(/_$/, '') || 'fc2'}_animation.omf`);
 writeFileSync(omfPath, omf);
 writeFileSync(join(OUT, 'retarget_report.txt'), report.join('\n') + '\n');

@@ -11,6 +11,8 @@ import { makePe, makeSocDb, makeXrayDb } from '../../../packages/gmv/test/helper
 import { makeOdol, makePaaDxt1, makePbo, rapify } from '../../../packages/gmv/test/helpers/arma';
 import { makeYdr } from '../../../packages/gmv/test/helpers/rage';
 import { skinnedNif, turnKf } from '../../../packages/gmv/test/helpers/nif';
+import { makeZip } from '../../../packages/gmv/test/helpers/zip';
+import { cryFile, ident, mesh, mtl, node, tri } from '../../../packages/gmv/test/helpers/cry1';
 import { fv, makeFat, makeFcb, makeRml, makeTerrain, makeXbt } from '../../../packages/gmv/test/helpers/dunia';
 
 const ext = resolve(__dirname, '../dist/chrome');
@@ -377,6 +379,19 @@ describe('расширение в Chromium', () => {
     await page.locator('#fileArch').setInputFiles(put('gamedata.db0', db.slice().buffer));
     await expect.poll(() => page.locator('#archList option').count(), { timeout: 15000 }).toBe(1);
     await page.evaluate(() => localStorage.removeItem('gmv.xray.socKeys'));
+    expect(errors).toEqual([]);
+  });
+
+  it('Far Cry: .cgf из .pak, текстура по пути материала, Z вверх', async () => {
+    await chooseGame('farcry');
+    const cgf = new Uint8Array(cryFile([mtl('s_box(TemplModelCommon)/mat_default', 'Textures\\e2e\\box.dds'), node('box', 3, 1, ident()), mesh(tri.pos, tri.faces, tri.uvs)]));
+    const pak = makeZip({ 'Objects/e2e/box.cgf': cgf, 'Textures/e2e/box.dds': new Uint8Array(makeDdsDxt1(8, 8)) });
+    await page.locator('#fileArch').setInputFiles(put('Objects.pak', pak.slice().buffer));
+    await expect.poll(() => page.locator('#archList option').count()).toBe(1);
+    await page.locator('#archList').selectOption('0');
+    await expect.poll(() => status().textContent()).toContain('Загружено');
+    await expect.poll(() => page.locator('#mesh0 .st').textContent()).toContain('8×8');
+    expect(await drawnPixels()).toBeGreaterThan(50);
     expect(errors).toEqual([]);
   });
 

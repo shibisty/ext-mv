@@ -16,6 +16,8 @@ export const coreEngine = defineEngine({
       engine: 'core',
       extensions: ['zip', 'pk3', 'pk4', 'iwd', 'pak'],
       sniff: (h) => (hasMagic(h, 'PK\x03\x04') || hasMagic(h, 'PK\x05\x06') ? 1 : 0),
+      // .pak CryEngine (Far Cry, Crysis, KCD) в «Папке игры» открываются сами: читается только центральный каталог ZIP
+      openFromFolder: (_h, name) => /\.pak$/i.test(name),
       open: (file) => openZip(file),
     },
   ],
