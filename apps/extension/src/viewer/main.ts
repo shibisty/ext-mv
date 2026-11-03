@@ -1,6 +1,6 @@
 // Страница просмотрщика: стартовое окно выбора игры, верхняя панель инструментов, ресурсы слева, сцена/меши/анимации справа.
 import {
-  buildDiagnostics, createRegistry, engineTitle, presetText, tr, translatePlacement, instanceAt, rotatePlacement, sceneTree, ViewerSession,
+  autoLayers, XRAY_FX_PART, buildDiagnostics, createRegistry, engineTitle, presetText, tr, translatePlacement, instanceAt, rotatePlacement, sceneTree, ViewerSession,
   type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Motion, type RayHit, type SceneNode,
 } from 'gmv';
 import { allEngines } from 'gmv/engines';
@@ -132,6 +132,8 @@ session.on('model', ({ model, main }) => {
   viewer.setModel(model);
   input('rngClip').value = '1000';
   applyClip();
+  input('rngDist').value = '1000';
+  applyDist();
   flySpeedLabel();
   input('chkZup').checked = !!model.defaultZUp;
   input('chkInvQuat').checked = false;
@@ -148,6 +150,19 @@ session.on('model', ({ model, main }) => {
 session.on('motions', rebuildMotions);
 session.on('textures', () => void applyTextures());
 session.on('archives', () => refreshArchList());
+// ---------- полоса прогресса долгих операций ----------
+function showProgress(p: { text: string; done?: number; total?: number } | null): void {
+  const el = $('progress');
+  if (!p) { el.hidden = true; return; }
+  el.hidden = false;
+  const known = p.total !== undefined && p.total > 0 && p.done !== undefined;
+  el.classList.toggle('busy', !known);
+  const pc = known ? Math.round((100 * p.done!) / p.total!) : 0;
+  $('progressFill').style.width = known ? pc + '%' : '';
+  $('progressText').textContent = known ? `${p.text} — ${t('progress.percent', { p: pc })}` : p.text;
+  if (known) el.setAttribute('aria-valuenow', String(pc)); else el.removeAttribute('aria-valuenow');
+}
+session.on('progress', showProgress);
 
 function rebuildMeshList(): void {
   const box = $('meshList'), model = session.model;
@@ -187,8 +202,40 @@ const meshCheckbox = (i: number) => document.querySelector<HTMLInputElement>(`#m
 
 function motionLabel(m: Motion): string {
   if (m.load) return m.name;
-  return `${m.name} (${m.frames ? t('anim.frames', { n: m.frames }) : t('anim.seconds', { n: m.duration.toFixed(2) })})${m.source && m.source !== 'model' ? ' · ' + m.source : ''}`;
+  return `${m.name} (${m.frames ? t('anim.frames', { n: m.frames }) : t('anim.seconds', { n: m.duration.toFixed(2) })})${m.kind === 'xray' && m.part ? ' · ' + t('anim.part', { part: m.part }) : ''}${m.source && m.source !== 'model' ? ' · ' + m.source : ''}`;
 }
+
+/** Анимация части тела X-Ray: остальные части играют выбранную (или подобранную) анимацию. */
+function rebuildLayers(m: Motion | null): Motion | null {
+  const sel = select('motionLayer'), lbl = $('lblLayer');
+  sel.textContent = '';
+  if (!m || m.kind !== 'xray' || !m.part || m.part === XRAY_FX_PART) { lbl.hidden = true; return m; }
+  const auto = autoLayers(m, session.motions);
+  const add = (parent: HTMLElement, v: string, text: string) => { const o = document.createElement('option'); o.value = v; o.textContent = text; parent.append(o); };
+  add(sel, 'auto', t('anim.layerAuto', { names: auto.map((x) => x.name).join(' + ') || '—' }));
+  add(sel, 'none', t('anim.layerNone'));
+  const groups = new Map<string, HTMLOptGroupElement>();
+  session.motions.forEach((x, i) => {
+    if (x.kind !== 'xray' || !x.part || x.part === m.part || x.part === XRAY_FX_PART) return;
+    let g = groups.get(x.part);
+    if (!g) { g = document.createElement('optgroup'); g.label = x.part; groups.set(x.part, g); sel.append(g); }
+    add(g, String(i), x.name);
+  });
+  lbl.hidden = groups.size === 0;
+  sel.value = 'auto';
+  return { ...m, layers: auto };
+}
+select('motionLayer').onchange = () => {
+  const base = session.motions[curMotion];
+  if (!base || base.kind !== 'xray') return;
+  const v = select('motionLayer').value, auto = autoLayers(base, session.motions);
+  let layers = auto;
+  if (v === 'none') layers = [];
+  else if (v !== 'auto') { const pick = session.motions[+v]; if (pick?.kind === 'xray') layers = [pick, ...auto.filter((x) => x.part !== pick.part)]; }
+  const time = viewer.state.time;
+  viewer.setMotion({ ...base, layers });
+  viewer.state.time = time;
+};
 function rebuildMotions(list: readonly Motion[]): void {
   const sel = select('motionSel');
   sel.textContent = '';
@@ -222,7 +269,7 @@ async function selectMotion(i: number): Promise<void> {
     }
   }
   if (curMotion !== i) return;
-  viewer.setMotion(m);
+  viewer.setMotion(rebuildLayers(m));
   input('chkInvQuat').checked = viewer.state.invert;
   button('btnPlay').textContent = '⏸';
 }
@@ -288,6 +335,19 @@ const applyClip = () => {
   $('lblClip').textContent = y.toFixed(1);
 };
 input('rngClip').oninput = applyClip;
+// дальность прорисовки: 1000 — без ограничения, иначе по логарифмической шкале от 20 единиц до размера сцены
+const fmtTris = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(Math.round(n)));
+const distLabel = () => {
+  const d = viewer.options.drawDistance;
+  $('lblDist').textContent = `${d ? Math.round(d) : '∞'} · ${t('view.drawn', { n: fmtTris(viewer.renderer.drawStats.tris) })}`;
+};
+const applyDist = () => {
+  const v = +input('rngDist').value, size = Math.max(40, viewer.renderer.bounds.radius * 2);
+  viewer.options.drawDistance = v >= 1000 || !viewer.model ? undefined : 20 * Math.pow(size / 20, v / 1000);
+  distLabel();
+};
+input('rngDist').oninput = applyDist;
+setInterval(() => { if (!$('lblDist').closest('[hidden]')) distLabel(); }, 500);
 input('chkZup').onchange = (e) => { viewer.setZUp((e.target as HTMLInputElement).checked); applyClip(); };
 
 // ---------- инструменты: камера, выбор, поворот ----------
@@ -458,7 +518,15 @@ input('fileModel').onchange = () => void session.addFiles(filesOf('fileModel'));
 input('fileOmf').onchange = async () => { for (const f of filesOf('fileOmf')) await session.loadMotions(f); };
 input('fileTex').onchange = () => void session.addFiles(filesOf('fileTex'));
 input('fileTexDir').onchange = () => session.addTextures(filesOf('fileTexDir'));
-input('fileFolder').onchange = async () => { const a = session.addFolder(filesOf('fileFolder')); await session.openFolderArchives(a); };
+// выбор папки: пока браузер перечисляет файлы (до события change), показываем неопределённый прогресс
+button('btnFolder').addEventListener('click', () => showProgress({ text: t('progress.pick') }));
+input('fileFolder').addEventListener('cancel', () => showProgress(null));
+input('fileFolder').onchange = async () => {
+  const list = filesOf('fileFolder');
+  if (!list.length) { showProgress(null); return; }
+  const a = await session.addFolderAsync(list);
+  await session.openFolderArchives(a);
+};
 input('fileArch').onchange = () => void session.addArchives(filesOf('fileArch'));
 input('fileMeshTex').onchange = () => {
   const f = filesOf('fileMeshTex')[0];
@@ -476,14 +544,14 @@ button('btnDiag').onclick = async () => {
 attachDrop(window, $('drop'), async ({ files, folders }) => {
   enterViewer();
   for (const list of folders) {
-    const a = session.addFolder(list as BlobFile[]);
+    const a = await session.addFolderAsync(list as BlobFile[]);
     await session.openFolderArchives(a);
     // одна модель в папке — сразу открыть
     const models = a.entries.filter((e) => session.modelExtensions.some((x) => e.path.endsWith('.' + x)));
     if (models.length === 1 && !files.length) await session.openEntry({ archive: a, entry: models[0]! });
   }
   if (files.length) await session.addFiles(files);
-});
+}, (n) => { enterViewer(); showProgress({ text: t('progress.walk', { n }) }); });
 
 // ---------- экспорт ----------
 /** Пиксели картинки: браузерные PNG/JPG приходят как ImageBitmap — читаем через холст. */

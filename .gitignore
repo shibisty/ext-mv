@@ -5,3 +5,9 @@ dist/
 .vite/
 samples/
 .tmp
+*.ts.bak*
+*_skeleton.json
+*_all.tsv
+mf_a_census.md
+mf_a_metro.md
+out_retarget

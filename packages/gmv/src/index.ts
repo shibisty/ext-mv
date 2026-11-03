@@ -10,6 +10,7 @@ export { composeSurface, surfaceCandidates, surfaceMaps } from './core/surface';
 export { TextureLibrary, type TextureSource, type ImageDecoder } from './core/textures';
 export { buildDiagnostics, hexDump, type DiagnosticsInput } from './core/diagnostics';
 export { NodeSkeleton, type SkeletonNode } from './core/skeleton';
+export { autoLayers, XRAY_FX_PART } from './core/motions';
 export { sceneTree, sceneLeaves, applyPlacement, rotatePlacement, translatePlacement, visibleIndices, instanceAt, pickRay, type SceneNode, type RayHit } from './core/scene';
 export { coreEngine } from './core/builtin';
 export { createArchive, readRange, TEXTURE_RE, type ArchiveSpec } from './core/archives/common';

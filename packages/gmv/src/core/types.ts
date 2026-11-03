@@ -169,6 +169,8 @@ export interface XrayMotion extends MotionBase {
   tracks: XrayTrack[];
   /** Часть тела (ноги, торс, голова) или «эффект», если анимация управляет не всем скелетом. */
   part?: string;
+  /** Анимации других частей тела, играющие одновременно (ноги + торс): кости без своего трека берутся из них. */
+  layers?: XrayMotion[];
 }
 /** Покадровая вершинная анимация (MD2/MD3/MDL). */
 export interface VertexMotion extends MotionBase {

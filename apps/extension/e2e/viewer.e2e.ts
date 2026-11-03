@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { makeDdsArgb, makeDdsDxt1, makeMd2, makeOgf } from '../../../packages/gmv/test/helpers/fixtures';
-import { makeXrayDb } from '../../../packages/gmv/test/helpers/xray';
+import { makePe, makeSocDb, makeXrayDb } from '../../../packages/gmv/test/helpers/xray';
 import { makeOdol, makePaaDxt1, makePbo, rapify } from '../../../packages/gmv/test/helpers/arma';
 import { makeYdr } from '../../../packages/gmv/test/helpers/rage';
 import { skinnedNif, turnKf } from '../../../packages/gmv/test/helpers/nif';
@@ -253,6 +253,18 @@ describe('расширение в Chromium', () => {
     // красная основа; на половине второго сектора синий слой стоит через вершину — смешанный цвет на всей полосе
     expect(red).toBeGreaterThan(500);
     expect(mixed).toBeGreaterThan(300);
+    // отсечение: всё в кадре — рисуется весь ландшафт; дальность 20 м при камере в стороне — почти ничего
+    const drawn = () => page.evaluate(() => (globalThis as unknown as { __gmvViewer: { renderer: { drawStats: { tris: number; cells: number } } } }).__gmvViewer.renderer.drawStats);
+    const full = await drawn();
+    expect(full.cells).toBeGreaterThan(1);
+    expect(full.tris).toBeGreaterThan(10000);
+    await inView(() => page.locator('#rngDist').fill('0'));
+    await page.waitForTimeout(200);
+    expect((await drawn()).tris).toBeLessThan(full.tris / 4);
+    expect(await page.locator('#lblDist').textContent()).toMatch(/^20 ·/);
+    await inView(() => page.locator('#rngDist').fill('1000'));
+    await page.waitForTimeout(200);
+    expect((await drawn()).tris).toBe(full.tris);
     expect(errors).toEqual([]);
   });
 
@@ -317,6 +329,54 @@ describe('расширение в Chromium', () => {
     await page.locator('#start select.lang').selectOption('ru');
     await chooseGame('quake2');
     expect(await page.locator('#btnFolder').textContent()).toBe('Папка игры…');
+    expect(errors).toEqual([]);
+  });
+
+  it('«Папка игры»: полоса прогресса при выборе, индексация, список моделей', async () => {
+    await chooseGame('quake2');
+    const dir = join(tmp, 'q2game'), { mkdirSync } = await import('node:fs');
+    for (let d = 0; d < 20; d++) { mkdirSync(join(dir, 'baseq2', `d${d}`), { recursive: true }); for (let i = 0; i < 400; i++) writeFileSync(join(dir, 'baseq2', `d${d}`, `f${i}.txt`), 'x'); }
+    mkdirSync(join(dir, 'baseq2', 'models'), { recursive: true });
+    writeFileSync(join(dir, 'baseq2', 'models', 'tris.md2'), Buffer.from(makeMd2()));
+    // выбор папки: пока браузер перечисляет файлы, видна полоса без процентов
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#btnFolder').click()]);
+    expect(await page.locator('#progress').isVisible()).toBe(true);
+    expect(await page.locator('#progress').getAttribute('class')).toContain('busy');
+    const seen: string[] = [];
+    await page.exposeFunction('__progressSeen', (t: string) => { seen.push(t); });
+    await page.evaluate(() => new MutationObserver(() => (globalThis as unknown as { __progressSeen(t: string): void }).__progressSeen(document.querySelector('#progressText')!.textContent!)).observe(document.querySelector('#progressText')!, { childList: true, characterData: true, subtree: true }));
+    await chooser.setFiles(dir);
+    await expect.poll(() => page.locator('#archList option').count(), { timeout: 15000 }).toBe(1);
+    await expect.poll(() => page.locator('#progress').isVisible()).toBe(false);
+    expect(seen.some((t) => /Индексация папки: файлов 8001 — \d+ %/.test(t))).toBe(true);
+    await page.locator('#archList').selectOption('0');
+    await expect.poll(() => status().textContent()).toContain('Загружено: tris.md2');
+    expect(errors).toEqual([]);
+  });
+
+  it('«Тень Чернобыля»: архив без exe — понятная ошибка; после «Папки игры» ключ запомнен и архив открывается один', async () => {
+    const key = { tableSeed: 0x13572468, encryptSeed: 0x24681357, iterations: 2048 };
+    const noise = Array.from({ length: 200 }, (_, i) => (Math.imul(i + 3, 0x9e3779b1) >>> 0) | 0x10000);
+    const db = makeSocDb([{ path: 'meshes\\actors\\a.ogf', data: new Uint8Array(makeOgf(false)) }], key);
+    const exe = makePe([...noise.slice(0, 100), key.tableSeed, key.encryptSeed, ...noise.slice(100)]);
+    await chooseGame('stalker-soc');
+    await page.evaluate(() => localStorage.removeItem('gmv.xray.socKeys'));
+    await page.reload();
+    await chooseGame('stalker-soc');
+    await page.locator('#fileArch').setInputFiles(put('gamedata.db0', db.slice().buffer));
+    await expect.poll(() => status().textContent()).toMatch(/Исполняемых файлов игры среди выбранных нет/);
+    errors.length = 0; // console.error от архива ожидаем
+    const { mkdirSync } = await import('node:fs');
+    const dir = join(tmp, 'soc'); mkdirSync(join(dir, 'bin'), { recursive: true });
+    writeFileSync(join(dir, 'gamedata.db0'), db); writeFileSync(join(dir, 'bin', 'XR_3DA.exe'), exe);
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#btnFolder').click()]);
+    await chooser.setFiles(dir);
+    await expect.poll(() => page.locator('#archList option').count(), { timeout: 15000 }).toBe(1);
+    await page.reload();
+    await chooseGame('stalker-soc');
+    await page.locator('#fileArch').setInputFiles(put('gamedata.db0', db.slice().buffer));
+    await expect.poll(() => page.locator('#archList option').count(), { timeout: 15000 }).toBe(1);
+    await page.evaluate(() => localStorage.removeItem('gmv.xray.socKeys'));
     expect(errors).toEqual([]);
   });
 

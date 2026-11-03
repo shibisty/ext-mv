@@ -1,9 +1,11 @@
 // Парсер X-Ray OGF (v4) и OMF. Без внешних зависимостей.
+import { XRAY_FX_PART } from '../../core/motions';
+import { lzhufDecompress } from '../../core/codecs/lzhuf';
 import type { Bounds, XrayMotion, XrayTrack } from '../../core/types';
 
 export const OGF = {
   HEADER: 1, TEXTURE: 2, VERTICES: 3, INDICES: 4, CHILDREN: 9, S_BONE_NAMES: 13, S_MOTIONS: 14,
-  S_SMPARAMS: 15, S_IKDATA: 16, S_USERDATA: 17, S_DESC: 18, S_MOTION_REFS0: 19, S_MOTION_REFS1: 20,
+  S_SMPARAMS: 15, S_IKDATA: 16, S_USERDATA: 17, S_DESC: 18, S_MOTION_REFS0: 19, S_MOTION_REFS1: 24,
 } as const;
 const TYPE_NAMES = ['NORMAL', 'HIERRARHY', 'PROGRESSIVE', 'SKELETON_ANIM', 'SKELETON_GEOMDEF_PM', 'SKELETON_GEOMDEF_ST',
   'LOD', 'TREE_ST', 'PARTICLE_EFFECT', 'PARTICLE_GROUP', 'SKELETON_RIGID', 'TREE_PM'];
@@ -82,18 +84,23 @@ function parseGeometry(buf: ArrayBuffer, vtx: OgfChunk, idx: OgfChunk, tex: OgfC
   return { texture, shader, vertexCount: n, pos, nor, uv, bone, weight: wt, indices, skinned: stride !== 32, stride };
 }
 
-function collectMeshes(buf: ArrayBuffer, chunks: OgfChunk[], out: OgfMesh[], nBones: number): void {
+/** Сжатые (LZHUF, старший бит id) чанки — распаковываются в отдельный буфер; остальные остаются как есть. */
+export function unpackChunks(buf: ArrayBuffer, chunks: OgfChunk[]): { buf: ArrayBuffer; chunks: OgfChunk[] } {
+  if (!chunks.some((c) => c.comp)) return { buf, chunks };
+  const parts = chunks.map((c) => { const raw = new Uint8Array(buf, c.offset, c.size); return c.comp ? lzhufDecompress(raw) : raw; });
+  const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0)), list: OgfChunk[] = [];
+  let o = 0;
+  parts.forEach((p, i) => { out.set(p, o); list.push({ id: chunks[i]!.id, comp: false, offset: o, size: p.length }); o += p.length; });
+  return { buf: out.buffer, chunks: list };
+}
+
+function collectMeshes(buf0: ArrayBuffer, chunks0: OgfChunk[], out: OgfMesh[], nBones: number): void {
+  const { buf, chunks } = unpackChunks(buf0, chunks0);
   const find = (id: number) => chunks.find((c) => c.id === id);
   const vtx = find(OGF.VERTICES), idx = find(OGF.INDICES);
-  if (vtx && idx) {
-    if (vtx.comp || idx.comp) throw new Error('Сжатые (LZ) чанки геометрии не поддерживаются');
-    out.push(parseGeometry(buf, vtx, idx, find(OGF.TEXTURE), nBones));
-  }
+  if (vtx && idx) out.push(parseGeometry(buf, vtx, idx, find(OGF.TEXTURE), nBones));
   const ch = find(OGF.CHILDREN);
-  if (ch) {
-    if (ch.comp) throw new Error('Сжатый чанк CHILDREN не поддерживается');
-    for (const s of readChunks(buf, ch.offset, ch.offset + ch.size)) collectMeshes(buf, readChunks(buf, s.offset, s.offset + s.size), out, nBones);
-  }
+  if (ch) for (const s of readChunks(buf, ch.offset, ch.offset + ch.size)) collectMeshes(buf, readChunks(buf, s.offset, s.offset + s.size), out, nBones);
 }
 
 function parseBoneNames(buf: ArrayBuffer, c: OgfChunk): OgfBone[] {
@@ -241,7 +248,7 @@ function parseMotionsChunk(buf: ArrayBuffer, c: OgfChunk, bones: readonly OgfBon
           const t: XrayTrack[] = [];
           for (const bi of only) if (m.tracks[bi]) t[bi] = m.tracks[bi]!;
           m.tracks = t;
-          m.part = fx ? 'эффект' : params!.parts[def.boneOrPart]!.name;
+          m.part = fx ? XRAY_FX_PART : params!.parts[def.boneOrPart]!.name;
         }
       }
       out.push(m);
@@ -258,8 +265,8 @@ export function parseOMF(buf: ArrayBuffer, bones: readonly OgfBone[]): XrayMotio
   return parseMotionsChunk(buf, c, bones, pc ? parseSMParams(buf, pc) : null);
 }
 
-export function parseOGF(buf: ArrayBuffer): OgfModel {
-  const top = readChunks(buf, 0, buf.byteLength);
+export function parseOGF(buf0: ArrayBuffer): OgfModel {
+  const { buf, chunks: top } = unpackChunks(buf0, readChunks(buf0, 0, buf0.byteLength));
   const hc = top.find((c) => c.id === OGF.HEADER);
   if (!hc) throw new Error('Не OGF файл: нет заголовка');
   const hdr = readHeader(buf, hc);

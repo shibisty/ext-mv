@@ -2,7 +2,8 @@
 import { computeTangents, type NormalPacking } from '../core/normals';
 import type { Bounds, DecodedImage, Mesh, Model, SkeletonRuntime } from '../core/types';
 import type { OrbitCamera } from './camera';
-import { FLIPZ, IDENT, mulCol, perspective, ZUP } from './mat4';
+import { FLIPZ, IDENT, invert, mulCol, perspective, ZUP } from './mat4';
+import { boxVisible, buildCells, growCells, meshBox, visibleRanges, type CellLayout } from './cull';
 
 const VS = `#version 300 es
 precision highp float;
@@ -142,6 +143,8 @@ export interface DrawOptions {
   normalStrength?: number;
   /** Срез сверху: не рисовать выше этой высоты (координаты показа, Y вверх). */
   clipY?: number;
+  /** Дальность прорисовки в единицах модели (части уровня дальше не рисуются); по умолчанию — без ограничения. */
+  drawDistance?: number;
 }
 
 /** Цвета сцены (для тем оформления). */
@@ -168,6 +171,10 @@ interface GpuMesh {
   /** Прозрачность по вершинам (слои ландшафта), null — 1. */
   bA: WebGLBuffer | null;
   vao: WebGLVertexArrayObject; vaoW?: WebGLVertexArrayObject; bLine?: WebGLBuffer; lineCount?: number;
+  /** Рамка меша для отсечения (null — меш двигается: скелет, вершинная анимация — рисуется всегда). */
+  box: Float32Array | null;
+  /** Большой меш: треугольники по клеткам, свой буфер индексов в порядке клеток. */
+  cells?: CellLayout; vaoS?: WebGLVertexArrayObject; bIdxS?: WebGLBuffer; sortDirty?: boolean;
 }
 interface LineVao { vao: WebGLVertexArrayObject; buf: WebGLBuffer }
 
@@ -196,6 +203,8 @@ export class Renderer {
   private highlight: Array<{ mesh: number; iStart: number; iCount: number }> = [];
   private lmTex: WebGLTexture | null = null;
   private lmScale = 1;
+  /** Что нарисовано в последнем кадре (после отсечения): треугольники, вызовы, клеток всего. */
+  drawStats = { tris: 0, calls: 0, cells: 0 };
   /** Матрицы последнего кадра: проекция × вид × модель (для выбора лучом). */
   lastPVM: Float32Array | null = null;
   get zUpOn(): boolean { return this.zUp; }
@@ -255,7 +264,8 @@ export class Renderer {
       if (m.tex) gl.deleteTexture(m.tex);
       if (m.norm) gl.deleteTexture(m.norm);
       if (m.surf) gl.deleteTexture(m.surf);
-      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine, m.bUV2, m.bA]) if (b) gl.deleteBuffer(b);
+      if (m.vaoS) gl.deleteVertexArray(m.vaoS);
+      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine, m.bUV2, m.bA, m.bIdxS]) if (b) gl.deleteBuffer(b);
     }
     this.meshes = [];
     this.highlight = [];
@@ -274,6 +284,10 @@ export class Renderer {
   setModel(model: Model): void {
     const gl = this.gl;
     this.clear();
+    // клетки отсечения: 1/16 размера сцены, не меньше 8 единиц; у моделей со скелетом вершины двигаются — без отсечения
+    const B = model.bounds, ext = Math.max(B.max[0]! - B.min[0]!, B.max[1]! - B.min[1]!, B.max[2]! - B.min[2]!);
+    const cellSize = Math.max(8, ext / 16), still = !model.skeleton;
+    this.drawStats = { tris: 0, calls: 0, cells: 0 };
     for (const d of model.meshes) {
       const bPos = this.buf(gl.ARRAY_BUFFER, d.pos), bNor = this.buf(gl.ARRAY_BUFFER, d.nor), bUV = this.buf(gl.ARRAY_BUFFER, d.uv);
       const skin = !!model.skeleton;
@@ -281,10 +295,20 @@ export class Renderer {
       const bUV2 = d.uv2 ? this.buf(gl.ARRAY_BUFFER, d.uv2) : null, bA = d.vertexAlpha ? this.buf(gl.ARRAY_BUFFER, d.vertexAlpha) : null;
       const vao = gl.createVertexArray()!;
       const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
-        bPos, bNor, bUV, bBone, bWt, bTan, bUV2, bA, vao, bIdx: null as unknown as WebGLBuffer };
+        bPos, bNor, bUV, bBone, bWt, bTan, bUV2, bA, vao, bIdx: null as unknown as WebGLBuffer, box: still && !d.dynamic ? meshBox(d.pos, d.indices) : null };
       gl.bindVertexArray(vao);
       this.attribs(m);
       m.bIdx = this.buf(gl.ELEMENT_ARRAY_BUFFER, m.idx);
+      if (m.box) {
+        const L = buildCells(d.pos, m.idx, cellSize);
+        if (L) {
+          m.cells = L;
+          m.vaoS = gl.createVertexArray()!;
+          gl.bindVertexArray(m.vaoS);
+          this.attribs(m);
+          m.bIdxS = this.buf(gl.ELEMENT_ARRAY_BUFFER, L.sorted);
+        }
+      }
       this.meshes.push(m);
     }
     gl.bindVertexArray(null);
@@ -361,6 +385,18 @@ export class Renderer {
     else { const v = m.data.indices[iStart]!; m.idx.fill(v, iStart, end); }
     this.uploadIndices(m, iStart, end);
   }
+  /** Перенести изменённые индексы [from, to) в порядок клеток (выгрузка — перед следующим кадром). */
+  private syncSorted(m: GpuMesh, from: number, to: number, grow: boolean): void {
+    const L = m.cells, t0 = Math.floor(from / 3), t1 = Math.ceil(to / 3);
+    if (grow && m.box) { // объект сдвинут: рамки меша и клеток растут
+      const b = m.box, P = m.data.pos, I = m.data.indices;
+      for (let k = t0 * 3; k < t1 * 3; k++) { const o = I[k]! * 3; for (let a = 0; a < 3; a++) { const x = P[o + a]!; if (x < b[a]!) b[a] = x; if (x > b[3 + a]!) b[3 + a] = x; } }
+      if (L) growCells(L, P, I, t0, t1);
+    }
+    if (!L) return;
+    for (let t = t0; t < t1; t++) { const s = L.slot[t]! * 3; L.sorted[s] = m.idx[t * 3]!; L.sorted[s + 1] = m.idx[t * 3 + 1]!; L.sorted[s + 2] = m.idx[t * 3 + 2]!; }
+    m.sortDirty = true;
+  }
   /** Перезалить вершины (позиции, нормали) и индексы части меша после изменения данных (поворот экземпляра). */
   updateRange(i: number, vStart: number, vCount: number, iStart: number, iCount: number, hidden = false): void {
     const gl = this.gl, m = this.meshes[i];
@@ -371,12 +407,14 @@ export class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, m.bNor);
     gl.bufferSubData(gl.ARRAY_BUFFER, vStart * 12, m.data.nor.subarray(vStart * 3, (vStart + vCount) * 3));
     if (!hidden) { for (let k = iStart; k < iStart + iCount; k++) m.idx[k] = m.data.indices[k]!; this.uploadIndices(m, iStart, iStart + iCount); }
+    this.syncSorted(m, iStart, iStart + iCount, true);
   }
   private uploadIndices(m: GpuMesh, from: number, to: number): void {
     const gl = this.gl, bpe = m.idx.BYTES_PER_ELEMENT;
     gl.bindVertexArray(m.vao);
     gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, from * bpe, m.idx.subarray(from, to));
     gl.bindVertexArray(null);
+    this.syncSorted(m, from, to, false);
     // каркас пересобирается из idx при следующем показе
     if (m.vaoW) { gl.deleteVertexArray(m.vaoW); m.vaoW = undefined; }
     if (m.bLine) { gl.deleteBuffer(m.bLine); m.bLine = undefined; }
@@ -490,6 +528,10 @@ export class Renderer {
     gl.uniformMatrix4fv(this.U.mv!, false, mv);
     gl.uniformMatrix4fv(this.U.model!, false, model);
     this.lastPVM = mulCol(proj, mv);
+    // отсечение: глаз в координатах модели — последний столбец обратной mv
+    const far = o.drawDistance && o.drawDistance > 0 ? o.drawDistance : Infinity, inv = invert(mv), pvm = this.lastPVM;
+    const eye = inv ? [inv[12]! / inv[15]!, inv[13]! / inv[15]!, inv[14]! / inv[15]!] : null;
+    const stats = (this.drawStats = { tris: 0, calls: 0, cells: 0 }), ranges: number[] = [];
     gl.uniform1f(this.U.clipY!, o.clipY ?? 1e30);
     gl.uniform1i(this.U.bones!, 1);
     gl.uniform1i(this.U.tex!, 0);
@@ -528,17 +570,28 @@ export class Renderer {
       gl.uniform1i(this.U.hasSurf!, sf ? 1 : 0);
       gl.uniform1i(this.U.alpha!, o.alpha || m.data.alphaTest ? 1 : 0);
       gl.uniform1i(this.U.hasLm!, this.lmTex && m.data.uv2 && o.lightmap !== false ? 1 : 0);
+      if (m.cells && m.vaoS) {
+        gl.bindVertexArray(m.vaoS);
+        if (m.sortDirty) { gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, m.cells.sorted); m.sortDirty = false; }
+        visibleRanges(m.cells, pvm, eye, far, ranges);
+        const bpe = m.idx.BYTES_PER_ELEMENT;
+        for (let k = 0; k < ranges.length; k += 2) { gl.drawElements(gl.TRIANGLES, ranges[k + 1]!, m.itype, ranges[k]! * bpe); stats.tris += ranges[k + 1]! / 3; stats.calls++; }
+        stats.cells += m.cells.start.length;
+        return;
+      }
       gl.bindVertexArray(m.vao);
       gl.drawElements(gl.TRIANGLES, m.count, m.itype, 0);
+      stats.tris += m.count / 3; stats.calls++;
     };
-    for (const m of this.meshes) if (m.visible && !m.bA) drawMesh(m);
+    const seen = (m: GpuMesh) => m.visible && (!m.box || boxVisible(m.box, 0, pvm, eye, far));
+    for (const m of this.meshes) if (!m.bA && seen(m)) drawMesh(m);
     gl.disable(gl.POLYGON_OFFSET_FILL);
-    if (this.meshes.some((m) => m.visible && m.bA)) {
+    if (this.meshes.some((m) => m.bA && seen(m))) {
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       gl.depthFunc(gl.LEQUAL);
       gl.depthMask(false);
-      for (const m of this.meshes) if (m.visible && m.bA) drawMesh(m);
+      for (const m of this.meshes) if (m.bA && seen(m)) drawMesh(m);
       gl.depthMask(true);
       gl.depthFunc(gl.LESS);
       gl.disable(gl.BLEND);

@@ -1,6 +1,7 @@
 // Синтетика X-Ray: упаковщик LZHUF (жадный поиск совпадений + то же адаптивное дерево, что у распаковщика)
 // и архив .db (чанки [header], данные, сжатая таблица файлов).
 import { Bin } from './bin';
+import { socEncode } from '../../src/engines/xray/soc-key';
 
 const N = 4096, F = 60, THRESHOLD = 2, N_CHAR = 256 - THRESHOLD + F, T = N_CHAR * 2 - 1, R = T - 1, MAX_FREQ = 0x4000;
 
@@ -98,3 +99,32 @@ export function makeXrayDb(files: Array<{ path: string; data: Uint8Array; lzo?: 
   b.u32(0x80000001).u32(packed.length).bytes(packed);
   return b.toU8();
 }
+
+/** Архив как у «Тени Чернобыля»: без [header], таблица сжата LZHUF и зашифрована (ключ — тестовый, не игровой). */
+export function makeSocDb(files: Array<{ path: string; data: Uint8Array }>, key: { tableSeed: number; encryptSeed: number; iterations: number }): Uint8Array {
+  const b = new Bin();
+  b.u32(0);
+  const sizeAt = b.pos;
+  b.u32(0);
+  const table = new Bin(), start = b.pos;
+  table.u16(16 + 4).u32(0).u32(0).u32(0).ascii('dir\\').u32(0);
+  for (const f of files) { table.u16(16 + f.path.length).u32(f.data.length).u32(f.data.length).u32(0).ascii(f.path).u32(b.pos); b.bytes(f.data); }
+  b.patchU32(sizeAt, b.pos - start);
+  const packed = socEncode(key, lzhufCompress(table.toU8()));
+  b.u32(0x80000001).u32(packed.length).bytes(packed);
+  return b.toU8();
+}
+/** Минимальный PE: раздел кода и раздел данных (.data) со значениями (среди них — зёрна ключа). */
+export function makePe(dataWords: number[]): Uint8Array {
+  const b = new Bin();
+  b.u16(0x5a4d).zeros(0x3a).u32(0x40);
+  b.u32(0x4550).u16(0x14c).u16(2).zeros(12).u16(0).u16(0); // заголовок: 2 раздела, без опционального
+  const sec = (name: string, raw: number, ptr: number, ch: number) => { b.fixed(name, 8).u32(raw).u32(0).u32(raw).u32(ptr).zeros(12).u32(ch); };
+  const textAt = 0x200, dataAt = 0x400;
+  sec('.text', 0x200, textAt, 0x60000020);
+  sec('.data', dataWords.length * 4, dataAt, 0xc0000040);
+  b.seek(textAt); for (let i = 0; i < 128; i++) b.u32(0xdeadbeef ^ i * 7919); // в коде ключей нет
+  b.seek(dataAt); for (const w of dataWords) b.u32(w);
+  return b.toU8();
+}
+

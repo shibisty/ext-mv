@@ -4,7 +4,7 @@ import { tr } from './i18n';
 import { baseName, extOf, toArrayBuffer } from './binary';
 import { analyzeNormalMap, normalCandidates, type NormalPacking } from './normals';
 import { composeSurface, surfaceCandidates, surfaceMaps } from './surface';
-import { openFolder } from './archives/folder';
+import { openFolder, openFolderAsync } from './archives/folder';
 import type { AfterLoadContext, EngineMaps, FormatPlugin, GamePreset, LoadContext } from './plugin';
 import type { Registry } from './registry';
 import { TextureLibrary, type TextureSource } from './textures';
@@ -18,6 +18,8 @@ export interface SessionEvents {
   archives: Archive[];
   /** Набор доступных текстур изменился — стоит заново применить текстуры. */
   textures: void;
+  /** Долгая операция: текст и, если известно, сколько сделано из скольких; null — закончена. */
+  progress: { text: string; done?: number; total?: number } | null;
 }
 type Listener<T> = (payload: T) => void;
 
@@ -53,6 +55,8 @@ const MAX_SAME_DIR_MOTIONS = 80;
 
 export class ViewerSession {
   readonly archives: Archive[] = [];
+  /** Файлы-спутники архивов, выбранные раньше (XR_3DA.exe — ключ архивов ТЧ, .dir к IMG): передаются архивам при открытии. */
+  readonly companions: BlobFile[] = [];
   readonly textures: TextureLibrary;
   preset: GamePreset;
   model: Model | null = null;
@@ -91,6 +95,10 @@ export class ViewerSession {
     for (const fn of this.listeners.get(type) ?? []) (fn as Listener<SessionEvents[K]>)(payload);
   }
   private status(text: string, error = false): void { this.emit('status', { text, error }); }
+  /** Сообщить о ходе долгой операции (для полосы прогресса); без аргументов — операция закончена. */
+  private progress(text?: string, done?: number, total?: number): void { this.emit('progress', text === undefined ? null : { text, done, total }); }
+  /** Дать браузеру перерисовать полосу прогресса перед тяжёлым синхронным шагом. */
+  private yieldUI(): Promise<void> { return new Promise((r) => setTimeout(r, 0)); }
 
   // ---------- пресет ----------
   setPreset(id: string): GamePreset {
@@ -130,22 +138,43 @@ export class ViewerSession {
   async addArchives(files: readonly BlobFile[]): Promise<void> {
     const skipped: string[] = [];
     let opened = 0;
-    for (const f of files) {
-      try {
-        const plugin = await this.registry.archiveFor(f);
-        if (!plugin) continue; // спутник (.dir) или неизвестный формат
-        this.status(tr('session.readingArchive', { name: f.name }));
-        const a = await plugin.open(f, files);
-        if (a) { this.archives.push(a); opened++; }
-      } catch (e) {
-        console.error(e);
-        skipped.push(`${f.name}: ${errMsg(e)}`);
+    // спутники (XR_3DA.exe ТЧ, .dir) запоминаются: их можно выбрать отдельно от архивов (они лежат в другой папке)
+    const isCompanion = (f: BlobFile) => this.registry.archives.some((a) => a.companionExtensions?.includes(extOf(f.name)));
+    for (const f of files) if (isCompanion(f) && !this.companions.some((c) => c.name === f.name && c.size === f.size)) this.companions.push(f);
+    const all = [...files, ...this.companions.filter((c) => !files.includes(c))];
+    if (files.every(isCompanion)) { this.status(tr('session.companions', { list: files.map((f) => f.name).join(', ') })); return; }
+    try {
+      for (const [i, f] of files.entries()) {
+        try {
+          const plugin = await this.registry.archiveFor(f);
+          if (!plugin) continue; // спутник (.dir) или неизвестный формат
+          this.status(tr('session.readingArchive', { name: f.name }));
+          this.progress(tr('session.readingArchive', { name: f.name }), i, files.length);
+          await this.yieldUI();
+          const a = await plugin.open(f, all);
+          if (a) { this.archives.push(a); opened++; }
+        } catch (e) {
+          console.error(e);
+          skipped.push(`${f.name}: ${errMsg(e)}`);
+        }
       }
-    }
+    } finally { this.progress(); }
     if (skipped.length) {
       this.archivesChanged(tr('session.archivesSkipped', { n: this.archives.length, k: skipped.length, list: skipped.slice(0, 3).join('; ') + (skipped.length > 3 ? '…' : '') }));
       if (!opened) this.status(tr('session.archiveError', { error: skipped.slice(0, 3).join('; ') }), true);
     } else this.archivesChanged(tr('session.archives', { n: this.archives.length }));
+  }
+
+  /** «Папка игры» с полосой прогресса: индекс строится кусками, интерфейс не замирает (сотни тысяч файлов). */
+  async addFolderAsync(files: readonly BlobFile[]): Promise<Archive> {
+    try {
+      const a = await openFolderAsync(files, (done, total) => this.progress(tr('session.indexing', { n: total }), done, total));
+      this.archives.push(a);
+      this.progress(tr('session.folderTextures'));
+      await this.yieldUI();
+      this.archivesChanged(tr('session.folder', { name: a.name, n: a.entries.length }));
+      return a;
+    } finally { this.progress(); }
   }
 
   /** «Папка игры»: индексирует файлы без чтения. */
@@ -166,6 +195,7 @@ export class ViewerSession {
     // файлы-спутники (.dat к .fat Far Cry 2) — передаются вместе с архивами, сами не открываются
     const companions = new Set(this.registry.archives.filter((a) => a.openFromFolder).flatMap((a) => a.companionExtensions ?? []));
     const files: BlobFile[] = [], extra: BlobFile[] = [];
+    this.progress(tr('session.findArchives'));
     for (const e of folder.entries) {
       if (companions.has(extOf(e.path)) && !exts.has(extOf(e.path))) { const f = folder.blobOf(e); if (f) extra.push(f); continue; }
       if (!exts.has(extOf(e.path))) continue;
@@ -174,9 +204,12 @@ export class ViewerSession {
       const plugin = f ? await this.registry.archiveFor(f) : null;
       if (!f || !plugin?.openFromFolder) continue;
       // файлы с тем же расширением, но не архивы (F.E.A.R. Online: зашифрованные a3.Arch01…) — пропускаем
-      if (plugin.sniff && !plugin.sniff(new Uint8Array(await f.slice(0, 64).arrayBuffer()), f.name)) continue;
+      const head = new Uint8Array(await f.slice(0, 64).arrayBuffer());
+      if (plugin.sniff && !plugin.sniff(head, f.name)) continue;
+      if (typeof plugin.openFromFolder === 'function' && !plugin.openFromFolder(head, f.name)) continue;
       files.push(f);
     }
+    this.progress();
     if (!files.length) return 0;
     const before = this.archives.length;
     await this.addArchives([...files, ...extra]);
@@ -229,6 +262,8 @@ export class ViewerSession {
     }
     if (!main || !format) { this.status(tr('session.noModel'), true); return null; }
     this.status(tr('session.loading'));
+    this.progress(tr('session.loadingName', { name: main.name }));
+    await this.yieldUI();
     try {
       const model = await format.load(main, this.loadContext(files, main));
       model.normalY ??= this.registry.engine(format.engine)?.normalY ?? 'dx';
@@ -236,7 +271,7 @@ export class ViewerSession {
       this.overrides.clear();
       this.mapsCache.clear();
       this.motions.length = 0;
-      this.motions.push(...model.motions.map((m) => ({ ...m, source: 'model' })));
+      this.motions.push(...model.motions.map((m) => ({ ...m, source: m.source ?? 'model' })));
       this.emit('model', { model, main, format });
       if (format.afterLoad) await format.afterLoad(this.afterLoadContext(main, model));
       this.emit('motions', this.motions);
@@ -248,7 +283,7 @@ export class ViewerSession {
       this.lastFailure = { file: main, format: format.id, error: errMsg(e) };
       this.status(tr('session.error', { error: errMsg(e) }), true);
       return null;
-    }
+    } finally { this.progress(); }
   }
 
   private loadContext(files: ReadonlyArray<VFile | BlobFile>, main: VFile): LoadContext {

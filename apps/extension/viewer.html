@@ -51,6 +51,7 @@
         <hr>
         <label class="rng" data-i-title="view.relief.t" title="Как в Normal Map Studio: XY нормали карты умножаются на силу"><span data-i="view.relief">Рельеф</span> <input type="range" id="rngNI" min="0" max="3" step="0.05" value="1"> <span id="lblNI">1.00</span></label>
         <label class="rng" data-i-title="view.clip.t" title="Убрать всё выше заданной высоты — заглянуть внутрь зданий и подземелий"><span data-i="view.clip">Срез сверху</span> <input type="range" id="rngClip" min="0" max="1000" value="1000"> <span id="lblClip">выкл.</span></label>
+        <label class="rng" data-i-title="view.dist.t" title="Не рисовать части уровня дальше этого расстояния от камеры (на больших картах — быстрее)"><span data-i="view.dist">Дальность</span> <input type="range" id="rngDist" min="0" max="1000" value="1000"> <span id="lblDist">∞</span></label>
         <label class="rng" data-i-title="view.lmK.t" title="Яркость запечённого освещения"><span data-i="view.lmK">Яркость освещения</span> <input type="range" id="rngLm" min="0.25" max="4" step="0.05" value="1"> <span id="lblLm">1.00</span></label>
         <label><span data-i="view.mode">Показ</span> <select id="selNormView"><option value="0" data-i="view.mode0">освещение</option><option value="1" data-i="view.mode1">нормали цветом</option><option value="2" data-i="view.mode2">карта нормалей (касательные)</option><option value="3" data-i="view.mode3">поверхность PBR (R — AO, G — шероховатость, B — металл)</option></select></label>
       </div>
@@ -83,6 +84,7 @@
   <main>
     <canvas id="gl"></canvas>
     <div id="selInfo" class="sel" hidden></div>
+    <div id="progress" role="progressbar" aria-live="polite" hidden><span id="progressText"></span><div class="bar"><i id="progressFill"></i></div></div>
     <div id="drop" data-i="drop">Отпустите файлы или папку</div>
   </main>
 
@@ -99,6 +101,7 @@
       <h2 data-i="right.anim">Анимация</h2>
       <input id="motionFilter" type="search" data-i-ph="anim.filter" placeholder="Поиск анимации" autocomplete="off" hidden>
       <select id="motionSel" size="2" data-i-aria="right.anim" aria-label="Анимации"></select>
+      <label id="lblLayer" class="row" hidden><span data-i="anim.layer">Другие части тела</span> <select id="motionLayer"></select></label>
       <div class="row">
         <button id="btnPlay">⏸</button>
         <input id="rngTime" type="range" min="0" max="1000" value="0">

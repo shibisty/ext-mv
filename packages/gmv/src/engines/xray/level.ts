@@ -7,8 +7,8 @@ import { lzhufDecompress } from '../../core/codecs/lzhuf';
 import type { LoadContext } from '../../core/plugin';
 import type { Mesh, Model, VFile } from '../../core/types';
 
-const FSL = { HEADER: 1, SHADERS: 2, VISUALS: 3, VB: 9, IB: 10 } as const;
-const OGFL = { HEADER: 1, SWIDATA: 6, VCONTAINER: 7, ICONTAINER: 8, CHILDREN_L: 10, TREEDEF2: 12, GCONTAINER: 21 } as const;
+const FSL = { HEADER: 1, SHADERS: 2, VISUALS: 3, VB: 9, IB: 10, SWIS: 11 } as const;
+const OGFL = { HEADER: 1, SWIDATA: 6, VCONTAINER: 7, ICONTAINER: 8, CHILDREN_L: 10, TREEDEF2: 12, SWICONTAINER: 20, GCONTAINER: 21 } as const;
 /** Типы визуалов с собственной геометрией: обычный, прогрессивный, деревья. */
 const GEOM_TYPES = new Set([0, 2, 7, 11]);
 
@@ -72,7 +72,20 @@ export function parseIBs(u: Uint8Array): Uint16Array[] {
 
 export interface LevelVisual { type: number; shader: number; vb: number; vbOff: number; vbCount: number; ib: number; ibOff: number; ibCount: number; xform: Float32Array | null }
 
-export function parseVisuals(u: Uint8Array): LevelVisual[] {
+/** Окно индексов прогрессивного меша (SWI): смещение и число треугольников самого подробного уровня. */
+type Slide = [offset: number, tris: number];
+/** Первое окно SWI: 4×u32 резерв, u32 число окон, окна {u32 смещение, u16 треугольников, u16 вершин}. */
+const firstSlide = (d: DataView, p: number): Slide | null => (p + 28 <= d.byteLength && d.getUint32(p + 16, true) > 0 ? [d.getUint32(p + 20, true), d.getUint16(p + 24, true)] : null);
+
+/** Общие SWI уровня (level.geom, чанк 11; ЧН/ЗП): деревья TREE_PM ссылаются на них номером (чанк 20 визуала). */
+export function parseSwis(u: Uint8Array): Array<Slide | null> {
+  const d = dvOf(u), n = d.getUint32(0, true), out: Array<Slide | null> = [];
+  let p = 4;
+  for (let k = 0; k < n && p + 20 <= u.length; k++) { out.push(firstSlide(d, p)); p += 20 + d.getUint32(p + 16, true) * 8; }
+  return out;
+}
+
+export function parseVisuals(u: Uint8Array, swis: Array<Slide | null> = []): LevelVisual[] {
   const out: LevelVisual[] = [];
   for (const v of chunks(u)) {
     const sub = chunks(v.data), hdr = sub.find((c) => c.id === OGFL.HEADER);
@@ -83,11 +96,9 @@ export function parseVisuals(u: Uint8Array): LevelVisual[] {
     if (g) { const d = dvOf(g.data); [vb, vbOff, vbCount, ib, ibOff, ibCount] = [0, 4, 8, 12, 16, 20].map((o) => d.getUint32(o, true)) as [number, number, number, number, number, number]; }
     else if (vc && ic) { const a = dvOf(vc.data), b = dvOf(ic.data); [vb, vbOff, vbCount] = [a.getUint32(0, true), a.getUint32(4, true), a.getUint32(8, true)]; [ib, ibOff, ibCount] = [b.getUint32(0, true), b.getUint32(4, true), b.getUint32(8, true)]; }
     // прогрессивный меш: в буфере индексов лежат все уровни детализации; берём первое «окно» SWI — самое подробное
-    const swi = sub.find((c) => c.id === OGFL.SWIDATA);
-    if (swi && swi.data.length >= 28) {
-      const d = dvOf(swi.data), n = d.getUint32(16, true);
-      if (n > 0) { const off = d.getUint32(20, true), tris = d.getUint16(24, true); if (off + tris * 3 <= ibCount) { ibOff += off; ibCount = tris * 3; } }
-    }
+    const swi = sub.find((c) => c.id === OGFL.SWIDATA), swc = sub.find((c) => c.id === OGFL.SWICONTAINER);
+    const slide = swi ? firstSlide(dvOf(swi.data), 0) : swc && swc.data.length >= 4 ? swis[dvOf(swc.data).getUint32(0, true)] ?? null : null;
+    if (slide) { const [off, tris] = slide; if (off + tris * 3 <= ibCount) { ibOff += off; ibCount = tris * 3; } }
     let xform: Float32Array | null = null;
     const td = sub.find((c) => c.id === OGFL.TREEDEF2);
     if (td) { const d = dvOf(td.data); xform = new Float32Array(16); for (let k = 0; k < 16; k++) xform[k] = d.getFloat32(k * 4, true); }
@@ -110,7 +121,8 @@ export function levelModel(level: Uint8Array, geom: Uint8Array, name: string): M
   if (!sh || !vis || !vbc || !ibc) throw new Error('Не уровень X-Ray: нет шейдеров, визуалов или буферов level.geom');
   const shaders: string[] = [];
   { const d = dvOf(sh.data), n = d.getUint32(0, true); let p = 4; for (let k = 0; k < n; k++) { let s = ''; while (p < sh.data.length && sh.data[p]) s += String.fromCharCode(sh.data[p++]!); p++; shaders.push(s); } }
-  const vbs = parseVBs(vbc.data), ibs = parseIBs(ibc.data), visuals = parseVisuals(vis.data);
+  const swc = g.find((c) => c.id === FSL.SWIS);
+  const vbs = parseVBs(vbc.data), ibs = parseIBs(ibc.data), visuals = parseVisuals(vis.data, swc ? parseSwis(swc.data) : []);
   const groups = new Map<number, { pos: number[]; nor: number[]; uv: number[]; idx: number[] }>();
   let used = 0, skipped = 0;
   for (const v of visuals) {
@@ -135,6 +147,9 @@ export function levelModel(level: Uint8Array, geom: Uint8Array, name: string): M
       let u = 0, w = 0;
       if (vb.tc >= 0) {
         if (vb.tcType === 1) { u = d.getFloat32(o + vb.tc, true); w = d.getFloat32(o + vb.tc + 4, true); }
+        // SHORT4 — вершины деревьев и MU-моделей (машины, бочки, камни — визуалы TREE_ST/PM с матрицей): UV × 2048,
+        // z, w — коэффициенты ветра (FTreeVisual); сверено по атласам техники во всех трёх играх (диапазон 0..2048)
+        else if (vb.tcType === 7) { u = d.getInt16(o + vb.tc, true) / 2048; w = d.getInt16(o + vb.tc + 2, true) / 2048; }
         else { // SHORT2: координата × 1024, дробная поправка — в альфе касательной и бинормали
           const du = vb.tan >= 0 ? d.getUint8(o + vb.tan + 3) / 255 : 0, dv = vb.bin >= 0 ? d.getUint8(o + vb.bin + 3) / 255 : 0;
           u = (d.getInt16(o + vb.tc, true) + du) / 1024; w = (d.getInt16(o + vb.tc + 2, true) + dv) / 1024;
@@ -161,5 +176,22 @@ export async function loadLevel(main: VFile, ctx: LoadContext): Promise<Model> {
   const geom = await ctx.sibling('level.geom');
   if (!geom) throw new Error('Рядом с level нет level.geom');
   const dir = (main.path ?? '').split('/').slice(-2, -1)[0] ?? '';
-  return levelModel(new Uint8Array(await main.arrayBuffer()), new Uint8Array(geom), dir || main.name);
+  const model = levelModel(new Uint8Array(await main.arrayBuffer()), new Uint8Array(geom), dir || main.name);
+  // трава: level.details + высоты по level.cform
+  const det = await ctx.sibling('level.details');
+  if (det) {
+    try {
+      const { parseDetails, parseCForm, buildDetails } = await import('./details');
+      const map = parseDetails(new Uint8Array(det)), cf = await ctx.sibling('level.cform');
+      if (!cf) model.info.push('Трава: рядом нет level.cform — высоты не найти, трава не показана');
+      else {
+        const r = buildDetails(map, parseCForm(new Uint8Array(cf)));
+        model.meshes.push(...r.meshes);
+        model.bounds = boundsOf(model.meshes);
+        const tris = r.meshes.reduce((a, m) => a + m.indices.length / 3, 0);
+        model.info.push(`Трава (level.details): моделей ${map.models.length}, поставлено ${r.items} из ${r.candidates}${r.keep < 1 ? ` (прорежено до ${Math.round(r.keep * 100)} %)` : ''}, треугольников ${tris}`);
+      }
+    } catch (e) { model.info.push(`Трава: ${(e as Error).message}`); }
+  }
+  return model;
 }

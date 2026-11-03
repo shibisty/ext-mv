@@ -109,6 +109,25 @@ describe('ViewerSession', () => {
     expect(log.at(-1)).toMatch(/barrel\.vvd/);
   });
 
+  it('большая «Папка игры»: индекс кусками с прогрессом, результат как у синхронного; загрузка модели — с прогрессом', async () => {
+    const { s } = newSession('quake2'), prog: Array<string | null> = [];
+    s.on('progress', (p) => prog.push(p ? `${p.text}|${p.done ?? ''}/${p.total ?? ''}` : null));
+    const files = Array.from({ length: 12001 }, (_, i) => file(new Uint8Array(4), `f${i}.txt`, `game/d${i % 7}/f${i}.txt`));
+    files.push(file(makeMd2(), 'tris.md2', 'game/models/tris.md2'));
+    const a = await s.addFolderAsync(files);
+    expect(a.entries.length).toBe(12002);
+    expect(a.lookup('models/tris.md2')).not.toBeNull();
+    const steps = prog.filter((p) => p?.includes('/12002'));
+    expect(steps.length).toBeGreaterThanOrEqual(3); // 0, 5000, 10000, 12002
+    expect(steps.at(-1)).toMatch(/12002\/12002$/);
+    expect(prog.at(-1)).toBeNull();
+    prog.length = 0;
+    await s.openEntry(s.archiveModels().items[0]!);
+    expect(s.model).not.toBeNull();
+    expect(prog[0]).toMatch(/tris\.md2/);
+    expect(prog.at(-1)).toBeNull();
+  });
+
   it('модель + анимация чужой игры в одном броске: анимация не теряется', async () => {
     const { s } = newSession('skyrimse');
     await s.addFiles([file(MD5MESH, 'guy.md5mesh'), file(MD5ANIM, 'run.md5anim')]);

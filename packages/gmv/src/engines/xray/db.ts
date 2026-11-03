@@ -7,6 +7,7 @@ import { createArchive, readRange } from '../../core/archives/common';
 import { lzhufDecompress } from '../../core/codecs/lzhuf';
 import { lzo1xDecompress } from '../../core/codecs/lzo';
 import type { Archive, ArchiveEntry, BlobFile } from '../../core/types';
+import type { SocKey } from './soc-key';
 
 interface DbEntry extends ArchiveEntry { off: number; real: number; packed: number }
 
@@ -43,16 +44,64 @@ export function parseDbTable(t: Uint8Array): DbEntry[] {
   return out;
 }
 
-export async function openXrayDb(file: BlobFile): Promise<Archive> {
+/** Ключи «Тени Чернобыля», найденные в исполняемых файлах пользователя (по имени и размеру файла), — на время работы страницы. */
+const socKeys = new Map<string, SocKey>();
+/**
+ * Найденные ключи хранятся и в localStorage страницы (только на компьютере пользователя): после того как ключ один раз
+ * найден в его XR_3DA.exe, архивы ТЧ открываются и без exe. В сборку расширения ключи не попадают.
+ */
+const STORE = 'gmv.xray.socKeys';
+function loadStored(): void {
+  try {
+    const list = JSON.parse(globalThis.localStorage?.getItem(STORE) ?? '[]') as Array<[string, SocKey]>;
+    for (const [id, k] of list) if (k && Number.isFinite(k.tableSeed) && Number.isFinite(k.encryptSeed) && Number.isFinite(k.iterations)) socKeys.set(id, k);
+  } catch { /* хранилище недоступно — ключи только на время работы страницы */ }
+}
+function saveStored(): void {
+  try { globalThis.localStorage?.setItem(STORE, JSON.stringify([...socKeys])); } catch { /* недоступно */ }
+}
+let storedLoaded = false;
+/** Забыть найденные ключи, в том числе сохранённые (тесты, «сброс»). */
+export const resetSocKeys = (): void => { socKeys.clear(); storedLoaded = true; try { globalThis.localStorage?.removeItem(STORE); } catch { /* недоступно */ } };
+
+/** Разобрать таблицу: записи есть и лежат внутри архива. */
+function tableEntries(table: Uint8Array, fileSize: number): DbEntry[] | null {
+  try { const e = parseDbTable(table); return e.length && !e.some((x) => x.off + x.packed > fileSize) ? e : null; } catch { return null; }
+}
+
+export async function openXrayDb(file: BlobFile, siblings: readonly BlobFile[] = []): Promise<Archive> {
   const tab = await findTable(file);
   if (!tab) throw new Error(`${file.name}: не архив X-Ray (нет таблицы файлов)`);
   const raw = await readRange(file, tab.off, tab.off + tab.size);
-  let table: Uint8Array;
-  try { table = tab.id & COMPRESSED ? lzhufDecompress(raw) : raw; } catch { table = new Uint8Array(0); }
-  let entries: DbEntry[] = [];
-  try { entries = parseDbTable(table); } catch { entries = []; }
-  if (!entries.length || entries.some((e) => e.off + e.packed > file.size))
-    throw new Error(`${file.name}: таблица файлов зашифрована (архивы «Тени Чернобыля») или повреждена. Откройте распакованную папку gamedata.`);
+  let entries: DbEntry[] | null = null;
+  try { entries = tableEntries(tab.id & COMPRESSED ? lzhufDecompress(raw) : raw, file.size); } catch { entries = null; }
+  if (!entries && tab.id & COMPRESSED) {
+    // «Тень Чернобыля»: таблица зашифрована — ключ ищется в XR_3DA.exe, выбранном вместе с архивами (или в папке игры)
+    const { findSocKey, socDecode } = await import('./soc-key');
+    const check = (t: Uint8Array) => !!tableEntries(t, file.size);
+    if (!storedLoaded) { storedLoaded = true; loadStored(); }
+    for (const key of socKeys.values()) {
+      try { entries = tableEntries(lzhufDecompress(socDecode(key, raw)), file.size); } catch { entries = null; }
+      if (entries) break;
+    }
+    const exes = siblings.filter((f) => /\.exe$/i.test(f.name)).sort((a, b) => +!/xr_3da/i.test(a.name) - +!/xr_3da/i.test(b.name));
+    const tried: string[] = [];
+    for (const exe of entries ? [] : exes) {
+      const id = `${exe.name}:${exe.size}`;
+      if (socKeys.has(id)) continue;
+      let key: SocKey | null = null;
+      try { key = findSocKey(new Uint8Array(await exe.arrayBuffer()), raw, check); }
+      catch (e) { tried.push(`${exe.webkitRelativePath || exe.name}: ${(e as Error).message}`); continue; }
+      if (!key) { tried.push(`${exe.webkitRelativePath || exe.name} (${exe.size} Б) — ключ не найден`); continue; }
+      socKeys.set(id, key);
+      saveStored();
+      entries = tableEntries(lzhufDecompress(socDecode(key, raw)), file.size);
+      if (entries) break;
+    }
+    if (!entries)
+      throw new Error(`${file.name}: таблица файлов зашифрована (архивы «Тени Чернобыля»). Откройте папку игры целиком («Папка игры…») или выберите кнопкой «Открыть .db…» сначала bin\\XR_3DA.exe, затем архивы — ключ берётся из него. ${tried.length ? `Проверены: ${tried.join('; ')}.` : `Исполняемых файлов игры среди выбранных нет (выбрано файлов: ${siblings.length}).`}`);
+  }
+  if (!entries) throw new Error(`${file.name}: таблица файлов повреждена.`);
   return createArchive<DbEntry>({
     name: file.name,
     kind: 'xray-db',

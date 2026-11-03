@@ -15,11 +15,11 @@ function rigidInv(a: M16, o: M16): void {
   for (let c = 0; c < 3; c++) o[12 + c] = -(a[12]! * a[c * 4]! + a[13]! * a[c * 4 + 1]! + a[14]! * a[c * 4 + 2]!);
   o[3] = o[7] = o[11] = 0; o[15] = 1;
 }
-function eulerLocal(rot: number[], pos: number[], o: M16, transpose: boolean): void { // Fmatrix::setXYZi(x,y,z) = setHPB(-y,-x,z)
-  const h = -rot[1]!, p = -rot[0]!, b = rot[2]!;
-  const sh = Math.sin(h), ch = Math.cos(h), sp = Math.sin(p), cp = Math.cos(p), sb = Math.sin(b), cb = Math.cos(b);
-  const cc = ch * cb, cs = ch * sb, sc = sh * cb, ss = sh * sb;
-  const m = [cc - sp * ss, cs + sp * sc, -cp * sh, -cp * sb, cp * cb, sp, sc + sp * cs, ss - sp * cc, cp * ch];
+function eulerLocal(rot: number[], pos: number[], o: M16, transpose: boolean): void {
+  // Fmatrix::setXYZi(x, y, z) = setHPB(−y, −x, −z): для вектора-строки сначала поворот вокруг Z, затем X, затем Y
+  // (крен, тангаж, курс). Проверено по скинингу ЗП: длины рёбер меша в анимациях сохраняются только при таком порядке.
+  const cx = Math.cos(rot[0]!), sx = Math.sin(rot[0]!), cy = Math.cos(rot[1]!), sy = Math.sin(rot[1]!), cz = Math.cos(rot[2]!), sz = Math.sin(rot[2]!);
+  const m = [cz * cy + sz * sx * sy, sz * cx, -cz * sy + sz * sx * cy, -sz * cy + cz * sx * sy, cz * cx, sz * sy + cz * sx * cy, cx * sy, -sx, cx * cy];
   for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) o[r * 4 + c] = transpose ? m[c * 3 + r]! : m[r * 3 + c]!;
   o[3] = o[7] = o[11] = 0; o[12] = pos[0]!; o[13] = pos[1]!; o[14] = pos[2]!; o[15] = 1;
 }
@@ -62,7 +62,7 @@ export class XraySkeleton implements SkeletonRuntime {
   bindVariant = '';
   bindErr: [number, number] = [0, 0];
 
-  constructor(bones: OgfBone[], transposeBind = false) {
+  constructor(bones: OgfBone[], readonly transposeBind = false) {
     const n = (this.n = bones.length);
     this.parent = bones.map((b) => b.parent);
     const order: number[] = [], seen = new Uint8Array(n);
@@ -82,6 +82,9 @@ export class XraySkeleton implements SkeletonRuntime {
     for (let k = 0; k < 16 * n; k++) this.skin[k] = (k % 16) % 5 === 0 ? 1 : 0;
     this.world.set(this.bindWorld);
   }
+
+  /** Матрица кости по углам setXYZi и позиции — в той же трактовке, что bind-поза (для анимаций SDK). */
+  local(rot: number[], pos: number[], o: Float32Array): void { eulerLocal(rot, pos, o, this.transposeBind); }
 
   /** Выбор варианта трактовки углов: вершины должны лежать рядом со своими костями. */
   static auto(bones: OgfBone[], meshes: readonly Mesh[]): XraySkeleton {
@@ -113,16 +116,20 @@ export class XraySkeleton implements SkeletonRuntime {
   pose(motion: Motion | null, time: number, loop: boolean, invQ = false): void {
     if (!this.n) return;
     const m = motion && motion.kind === 'xray' ? motion : null;
-    let f0 = 0, f1 = 0, a = 0;
-    if (m) {
-      const F = m.frames;
+    // кадры основной анимации и слоёв (у каждого своя длина; слои всегда по кругу)
+    const frame = (x: XrayMotion, lp: boolean): [number, number, number] => {
+      const F = x.frames;
       let fr = time * FPS;
-      fr = loop ? ((fr % F) + F) % F : Math.min(Math.max(fr, 0), F - 1);
-      f0 = Math.floor(fr); a = fr - f0; f1 = loop ? (f0 + 1) % F : Math.min(f0 + 1, F - 1);
-    }
+      fr = lp ? ((fr % F) + F) % F : Math.min(Math.max(fr, 0), F - 1);
+      const f0 = Math.floor(fr);
+      return [f0, lp ? (f0 + 1) % F : Math.min(f0 + 1, F - 1), fr - f0];
+    };
+    const list: Array<[XrayMotion, number, number, number]> = m ? [[m, ...frame(m, loop)], ...(m.layers ?? []).map((x): [XrayMotion, number, number, number] => [x, ...frame(x, true)])] : [];
     for (const i of this.order) {
-      const tr = m ? m.tracks[i] : undefined, L = this.scratch;
-      if (tr) trackLocal(tr, f0, f1, a, invQ, L); else L.set(this.bindLocalV[i]!);
+      const L = this.scratch;
+      let done = false;
+      for (const [x, f0, f1, a] of list) { const tr = x.tracks[i]; if (tr) { trackLocal(tr, f0, f1, a, invQ, L); done = true; break; } }
+      if (!done) L.set(this.bindLocalV[i]!);
       const p = this.parent[i]!;
       if (p < 0) this.worldV[i]!.set(L); else mulRow(L, this.worldV[p]!, this.worldV[i]!);
       mulRow(this.invV[i]!, this.worldV[i]!, this.skinV[i]!);
@@ -131,13 +138,19 @@ export class XraySkeleton implements SkeletonRuntime {
 
   /** Автоподбор знака кватерниона: у верного варианта длины рёбер меша почти не меняются. */
   detectInvert(meshes: readonly Mesh[], motion: XrayMotion): boolean {
+    const s0 = this.motionError(meshes, motion, false), s1 = this.motionError(meshes, motion, true);
+    return s1 < s0 * 0.9;
+  }
+
+  /** Искажение меша анимацией: средняя относительная ошибка длин рёбер на трёх кадрах (0 — рёбра не тянутся). */
+  motionError(meshes: readonly Mesh[], motion: XrayMotion, inv: boolean): number {
     const edges: Array<[Mesh, number, number]> = [];
     for (const m of meshes) {
       if (!m.skinned) continue;
       const tc = m.indices.length / 3, step = Math.max(1, Math.floor(tc / 1500));
       for (let t = 0; t < tc; t += step) edges.push([m, m.indices[t * 3]!, m.indices[t * 3 + 1]!]);
     }
-    if (!edges.length) return false;
+    if (!edges.length) return 0;
     const sk = (m: Mesh, v: number, o: number[]) => {
       const x = m.pos[v * 3]!, y = m.pos[v * 3 + 1]!, z = m.pos[v * 3 + 2]!;
       o[0] = o[1] = o[2] = 0;
@@ -162,7 +175,7 @@ export class XraySkeleton implements SkeletonRuntime {
       }
       return d / (l || 1);
     };
-    const s0 = score(false), s1 = score(true);
-    return s1 < s0 * 0.9;
+    return score(inv);
   }
 }
+
