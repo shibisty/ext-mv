@@ -7,18 +7,18 @@ import { FLIPZ, IDENT, mulCol, perspective, ZUP } from './mat4';
 const VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor; layout(location=2) in vec2 aUV;
-layout(location=3) in vec4 aBone; layout(location=4) in vec4 aWeight; layout(location=5) in vec4 aTan; layout(location=6) in vec2 aUV2;
+layout(location=3) in vec4 aBone; layout(location=4) in vec4 aWeight; layout(location=5) in vec4 aTan; layout(location=6) in vec2 aUV2; layout(location=7) in float aAlpha;
 uniform mat4 uProj, uMV, uModel; uniform sampler2D uBones; uniform bool uSkinned;
-out vec3 vN, vP; out vec4 vT; out vec2 vUV, vUV2; out float vY;
+out vec3 vN, vP; out vec4 vT; out vec2 vUV, vUV2; out float vY, vA;
 mat4 bm(float f){ int i=int(f+0.5); return mat4(texelFetch(uBones,ivec2(0,i),0),texelFetch(uBones,ivec2(1,i),0),texelFetch(uBones,ivec2(2,i),0),texelFetch(uBones,ivec2(3,i),0)); }
 void main(){
   vec4 p=vec4(aPos,1.0); vec3 n=aNor, t=aTan.xyz;
   if(uSkinned){ mat4 m=bm(aBone.x)*aWeight.x; if(aWeight.y!=0.0)m+=bm(aBone.y)*aWeight.y; if(aWeight.z!=0.0)m+=bm(aBone.z)*aWeight.z; if(aWeight.w!=0.0)m+=bm(aBone.w)*aWeight.w; p=m*p; n=mat3(m)*n; t=mat3(m)*t; }
-  vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vUV2=aUV2; vY=(uModel*p).y; gl_Position=uProj*q;
+  vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vUV2=aUV2; vA=aAlpha; vY=(uModel*p).y; gl_Position=uProj*q;
 }`;
 const FS = `#version 300 es
 precision highp float;
-in vec3 vN, vP; in vec4 vT; in vec2 vUV, vUV2; in float vY; out vec4 o;
+in vec3 vN, vP; in vec4 vT; in vec2 vUV, vUV2; in float vY, vA; out vec4 o;
 // карта освещения уровня (яркость в R) по второму набору UV
 uniform sampler2D uLm; uniform bool uHasLm; uniform float uLmK;
 // срез сверху: всё выше uClipY (мировая высота показа) не рисуется — чтобы заглянуть внутрь уровня
@@ -92,7 +92,7 @@ void main(){
     vec3 R=reflect(-V,Nw);
     vec3 ambient=(alb*(1.0-metal)*amb+envColor(R,rough)*envBRDF(F0,rough,NdV))*ao;
     if(uHasLm){ float lm=texture(uLm,vUV2).r*uLmK; direct*=lm*0.5; ambient=ambient*0.25+alb*(1.0-metal)*lm*ao; }
-    o=vec4(pow(direct+ambient,vec3(1.0/2.2)),1.0);
+    o=vec4(pow(direct+ambient,vec3(1.0/2.2)),vA);
     return;
   }
   // освещение из Normal Map Studio: линейный цвет, полусферический фон, «геометрическая» тень, блик Блинна
@@ -101,7 +101,7 @@ void main(){
   vec3 amb=mix(vec3(0.05,0.05,0.06),vec3(0.20,0.22,0.26),Nw.y*0.5+0.5);
   vec3 col=alb*(amb+vec3(1.0,0.97,0.92)*ndl*geo*1.2)+vec3(sp);
   if(uHasLm){ float lm=texture(uLm,vUV2).r*uLmK; col=alb*(lm*(0.75+0.25*ndl*geo)+amb*0.15)+vec3(sp)*lm; }
-  o=vec4(pow(col,vec3(1.0/2.2)),1.0);
+  o=vec4(pow(col,vec3(1.0/2.2)),vA);
 }`;
 const LVS = `#version 300 es
 layout(location=0) in vec3 aPos; uniform mat4 uProj, uMV; void main(){ gl_Position=uProj*uMV*vec4(aPos,1.0); }`;
@@ -165,6 +165,8 @@ interface GpuMesh {
   idx: Uint16Array | Uint32Array;
   norm: WebGLTexture | null; normPack: NormalPacking; surf: WebGLTexture | null;
   bPos: WebGLBuffer; bNor: WebGLBuffer; bUV: WebGLBuffer; bBone: WebGLBuffer | null; bWt: WebGLBuffer | null; bTan: WebGLBuffer; bIdx: WebGLBuffer; bUV2: WebGLBuffer | null;
+  /** Прозрачность по вершинам (слои ландшафта), null — 1. */
+  bA: WebGLBuffer | null;
   vao: WebGLVertexArrayObject; vaoW?: WebGLVertexArrayObject; bLine?: WebGLBuffer; lineCount?: number;
 }
 interface LineVao { vao: WebGLVertexArrayObject; buf: WebGLBuffer }
@@ -236,11 +238,11 @@ export class Renderer {
     return b;
   }
   private attribs(m: GpuMesh): void {
-    const gl = this.gl, sets: Array<[WebGLBuffer | null, number]> = [[m.bPos, 3], [m.bNor, 3], [m.bUV, 2], [m.bBone, 4], [m.bWt, 4], [m.bTan, 4], [m.bUV2, 2]];
+    const gl = this.gl, sets: Array<[WebGLBuffer | null, number]> = [[m.bPos, 3], [m.bNor, 3], [m.bUV, 2], [m.bBone, 4], [m.bWt, 4], [m.bTan, 4], [m.bUV2, 2], [m.bA, 1]];
     // без скелета кости и веса, без второго UV — постоянные значения атрибутов, а не буферы (уровни: миллионы вершин)
     sets.forEach(([b, n], i) => {
       if (b) { gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, n, gl.FLOAT, false, 0, 0); }
-      else { gl.disableVertexAttribArray(i); if (i === 4) gl.vertexAttrib4f(i, 1, 0, 0, 0); else gl.vertexAttrib4f(i, 0, 0, 0, 0); }
+      else { gl.disableVertexAttribArray(i); if (i === 4 || i === 7) gl.vertexAttrib4f(i, 1, 0, 0, 0); else gl.vertexAttrib4f(i, 0, 0, 0, 0); }
     });
   }
 
@@ -253,7 +255,7 @@ export class Renderer {
       if (m.tex) gl.deleteTexture(m.tex);
       if (m.norm) gl.deleteTexture(m.norm);
       if (m.surf) gl.deleteTexture(m.surf);
-      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine, m.bUV2]) if (b) gl.deleteBuffer(b);
+      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine, m.bUV2, m.bA]) if (b) gl.deleteBuffer(b);
     }
     this.meshes = [];
     this.highlight = [];
@@ -276,10 +278,10 @@ export class Renderer {
       const bPos = this.buf(gl.ARRAY_BUFFER, d.pos), bNor = this.buf(gl.ARRAY_BUFFER, d.nor), bUV = this.buf(gl.ARRAY_BUFFER, d.uv);
       const skin = !!model.skeleton;
       const bBone = skin ? this.buf(gl.ARRAY_BUFFER, d.bone) : null, bWt = skin ? this.buf(gl.ARRAY_BUFFER, d.weight) : null, bTan = this.buf(gl.ARRAY_BUFFER, computeTangents(d));
-      const bUV2 = d.uv2 ? this.buf(gl.ARRAY_BUFFER, d.uv2) : null;
+      const bUV2 = d.uv2 ? this.buf(gl.ARRAY_BUFFER, d.uv2) : null, bA = d.vertexAlpha ? this.buf(gl.ARRAY_BUFFER, d.vertexAlpha) : null;
       const vao = gl.createVertexArray()!;
       const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
-        bPos, bNor, bUV, bBone, bWt, bTan, bUV2, vao, bIdx: null as unknown as WebGLBuffer };
+        bPos, bNor, bUV, bBone, bWt, bTan, bUV2, bA, vao, bIdx: null as unknown as WebGLBuffer };
       gl.bindVertexArray(vao);
       this.attribs(m);
       m.bIdx = this.buf(gl.ELEMENT_ARRAY_BUFFER, m.idx);
@@ -508,8 +510,8 @@ export class Renderer {
     gl.polygonOffset(1, 1);
     gl.uniform1i(this.U.flat!, 0);
     gl.uniform1f(this.U.flatAlpha!, 1);
-    for (const m of this.meshes) {
-      if (!m.visible) continue;
+    // сначала непрозрачные, затем слои с прозрачностью по вершинам (наложение поверх, без записи глубины)
+    const drawMesh = (m: GpuMesh) => {
       gl.activeTexture(gl.TEXTURE0);
       const has = o.tex && m.tex;
       gl.bindTexture(gl.TEXTURE_2D, has ? m.tex : null);
@@ -528,8 +530,19 @@ export class Renderer {
       gl.uniform1i(this.U.hasLm!, this.lmTex && m.data.uv2 && o.lightmap !== false ? 1 : 0);
       gl.bindVertexArray(m.vao);
       gl.drawElements(gl.TRIANGLES, m.count, m.itype, 0);
-    }
+    };
+    for (const m of this.meshes) if (m.visible && !m.bA) drawMesh(m);
     gl.disable(gl.POLYGON_OFFSET_FILL);
+    if (this.meshes.some((m) => m.visible && m.bA)) {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthFunc(gl.LEQUAL);
+      gl.depthMask(false);
+      for (const m of this.meshes) if (m.visible && m.bA) drawMesh(m);
+      gl.depthMask(true);
+      gl.depthFunc(gl.LESS);
+      gl.disable(gl.BLEND);
+    }
     if (o.wire) {
       gl.uniform1i(this.U.flat!, 1);
       gl.uniform3f(this.U.flatColor!, th.wire[0], th.wire[1], th.wire[2]);

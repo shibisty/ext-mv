@@ -54,6 +54,8 @@ export interface Archive {
   fileOf(entry: ArchiveEntry): VFile;
   /** Исходный файл записи (только «Папка игры»): чтобы открыть лежащий в папке архив. */
   blobOf?(entry: ArchiveEntry): BlobFile | null;
+  /** Текстура по точному пути из модели, даже если её нет в списке (архивы с именами-хешами: Far Cry 2). */
+  findTexture?(path: string): ArchiveEntry | null;
 }
 
 /** Канал карты: путь/имя файла и номер канала (0 R, 1 G, 2 B, 3 A). */
@@ -115,6 +117,8 @@ export interface Mesh {
   defaultHidden?: boolean;
   /** Второй набор UV — координаты в карте освещения (Model.lightmap). */
   uv2?: Float32Array;
+  /** Прозрачность по вершинам (0..1): слой ландшафта поверх основы — рисуется после непрозрачных мешей, с наложением. */
+  vertexAlpha?: Float32Array;
 }
 
 /** Запечённое освещение уровня (одна карта на модель): яркость в R, UV — Mesh.uv2. */

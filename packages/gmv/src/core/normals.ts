@@ -21,7 +21,7 @@ const PLAIN = ['_n', '_normal', '_nm', '_nrm', '_norm', '_ddn', '_local', '_bump
 /** Имена-кандидаты карты нормалей (без расширения, с тем же путём) для диффузной текстуры. */
 export function normalCandidates(diffuse: string): string[] {
   if (!diffuse) return [];
-  const p = diffuse.replace(/\\/g, '/'), dir = p.slice(0, p.lastIndexOf('/') + 1), stem = baseName(p).replace(/\.(dds|tga|png|jpe?g|paa|pac|pct|vtf|bmp|pcx|gif|webp|wal)$/i, '').toLowerCase();
+  const p = diffuse.replace(/\\/g, '/'), dir = p.slice(0, p.lastIndexOf('/') + 1), stem = baseName(p).replace(/\.(dds|tga|png|jpe?g|paa|pac|pct|vtf|bmp|pcx|gif|webp|wal|xbt)$/i, '').toLowerCase();
   const out = new Set<string>();
   for (const [re, subs] of SWAPS) if (re.test(stem)) for (const s of subs) out.add(stem.replace(re, s));
   // GTA V: uppr_diff_000_a_uni -> uppr_normal_000 (нормаль одна на все варианты цвета)

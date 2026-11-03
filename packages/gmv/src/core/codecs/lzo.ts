@@ -10,7 +10,7 @@ export function lzo1xDecompress(src: Uint8Array, sp: number, dst: Uint8Array): n
   const end = dst.length;
   const fail = (msg: string): never => { throw new Error(`LZO: ${msg} (вход ${ip - sp}, выход ${op}/${end})`); };
   const lit = (n: number) => {
-    if (op + n > end || ip + n > src.length) fail('выход за границы при копировании литералов');
+    if (!(op + n <= end && ip + n <= src.length)) fail('выход за границы при копировании литералов');
     dst.set(src.subarray(ip, ip + n), op); op += n; ip += n;
   };
   const copy = (from: number, n: number) => {
@@ -28,6 +28,8 @@ export function lzo1xDecompress(src: Uint8Array, sp: number, dst: Uint8Array): n
     else { lit(t); state = 1; }
   }
   for (;;) {
+    // без этого обрезанный поток зацикливается на undefined (ip/op становятся NaN — поэтому сравнение «не меньше»)
+    if (!(ip < src.length) || !(op <= end)) fail('обрыв входа');
     if (state === 0) {
       t = src[ip++]!;
       if (t >= 16) { state = 2; continue; }

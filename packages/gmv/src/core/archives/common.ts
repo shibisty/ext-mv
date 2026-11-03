@@ -3,7 +3,7 @@ import { baseName, stripExt, toArrayBuffer } from '../binary';
 import type { Archive, ArchiveEntry, BlobFile, VFile } from '../types';
 
 /** Расширения, по которым запись попадает в индекс текстур (путь без расширения). */
-export const TEXTURE_RE = /\.(dds|tga|png|jpe?g|pcx|bmp|webp|paa|pac|pct|tex)$/;
+export const TEXTURE_RE = /\.(dds|tga|png|jpe?g|pcx|bmp|webp|paa|pac|pct|tex|xbt)$/;
 
 export interface ArchiveSpec<E extends ArchiveEntry> {
   name: string;
@@ -24,6 +24,8 @@ export interface ArchiveSpec<E extends ArchiveEntry> {
   fileBytes?(entry: E): Promise<ArrayBuffer>;
   /** Исходный файл записи (папка). */
   blobOf?(entry: E): BlobFile | null;
+  /** Текстура по точному пути, которой нет в списке записей. */
+  findTexture?(path: string): E | null;
 }
 
 export function createArchive<E extends ArchiveEntry>(spec: ArchiveSpec<E>): Archive {
@@ -45,6 +47,7 @@ export function createArchive<E extends ArchiveEntry>(spec: ArchiveSpec<E>): Arc
     lookup: (p) => (spec.lookup ? spec.lookup(p) : (index.get(p) as E | undefined) ?? null),
     read: (e) => spec.read(e as E),
     blobOf: spec.blobOf ? (e) => spec.blobOf!(e as E) : undefined,
+    findTexture: spec.findTexture ? (p) => spec.findTexture!(p) : undefined,
     fileOf(e) {
       let f = files.get(e);
       if (!f) {

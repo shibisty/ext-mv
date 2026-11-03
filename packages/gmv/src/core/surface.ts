@@ -7,7 +7,7 @@ import type { ChannelRef, DecodedImage, SurfaceInfo } from './types';
 export function surfaceCandidates(diffuse: string): SurfaceInfo[] {
   if (!diffuse) return [];
   const p = diffuse.replace(/\\/g, '/'), dir = p.slice(0, p.lastIndexOf('/') + 1);
-  const stem = baseName(p).replace(/\.(dds|tga|png|jpe?g|paa|pac|pct|vtf|bmp|pcx|gif|webp|wal)$/i, '').toLowerCase().replace(/_(d|diff|diffuse|albedo|basecolor|base_color|color|col|c|co|b\.color)$/, '');
+  const stem = baseName(p).replace(/\.(dds|tga|png|jpe?g|paa|pac|pct|vtf|bmp|pcx|gif|webp|wal|xbt)$/i, '').toLowerCase().replace(/_(d|diff|diffuse|albedo|basecolor|base_color|color|col|c|co|b\.color)$/, '');
   const at = (s: string) => dir + stem + s;
   const ch = (map: string, channel: ChannelRef['channel']): ChannelRef => ({ map, channel });
   return [

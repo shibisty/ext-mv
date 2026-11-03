@@ -11,6 +11,7 @@ import { makeXrayDb } from '../../../packages/gmv/test/helpers/xray';
 import { makeOdol, makePaaDxt1, makePbo, rapify } from '../../../packages/gmv/test/helpers/arma';
 import { makeYdr } from '../../../packages/gmv/test/helpers/rage';
 import { skinnedNif, turnKf } from '../../../packages/gmv/test/helpers/nif';
+import { fv, makeFat, makeFcb, makeRml, makeTerrain, makeXbt } from '../../../packages/gmv/test/helpers/dunia';
 
 const ext = resolve(__dirname, '../dist/chrome');
 const tmp = mkdtempSync(join(tmpdir(), 'gmv-e2e-'));
@@ -207,6 +208,51 @@ describe('расширение в Chromium', () => {
     await expect.poll(() => status().textContent()).toContain('Загружено');
     await expect.poll(() => page.locator('#mesh0 .st').textContent()).toBe('8×8');
     expect(await drawnPixels()).toBeGreaterThan(20);
+    expect(errors).toEqual([]);
+  });
+
+  it('Far Cry 2: уровень — слои ландшафта смешиваются (наложение с прозрачностью по вершинам)', async () => {
+    await chooseGame('farcry2');
+    const ter = (id: number) => makeTerrain(id, () => 3, [0, 1, 255, 255], (x) => (id === 1 && x >= 32 && x % 2 === 0 ? 3 : 1)); // через вершину: каждая клетка — переход
+    const xml = makeRml({ name: 'WorldDescriptor', kids: [
+      { name: 'Grids', kids: [{ name: 'GridMapSectors', attrs: { CountX: '2', CountY: '1' } }, { name: 'GridWorldMaps', attrs: { CountX: '1', CountY: '1' } }] },
+      { name: 'Layers', kids: [{ name: 'Layer', attrs: { Name: 'Red', Texture: 'graphics\\t\\red_d.xbt', Tiling: '8' } }, { name: 'Layer', attrs: { Name: 'Blue', Texture: 'graphics\\t\\blue_d.xbt', Tiling: '8' } }] },
+    ] });
+    const { fat, dat } = makeFat([
+      { path: 'w/t0', data: ter(0) }, { path: 'w/t1', data: ter(1) },
+      { path: 'graphics\\t\\red_d.xbt', data: makeXbt(makeDdsArgb(4, 4, 0xffe02020)) },
+      { path: 'graphics\\t\\blue_d.xbt', data: makeXbt(makeDdsArgb(4, 4, 0xff2020e0)) },
+      { path: 'worlds\\tmpla\\generated\\tmpla.game.xml', data: xml },
+      { path: 'worlds\\tmpla\\generated\\tmpla.sectorsdep.fcb', data: makeFcb({ type: 'Deps', values: [['x', fv.u32(0)]] }) },
+    ]);
+    await page.locator('#fileArch').setInputFiles([put('worlds.fat', fat.slice().buffer), put('worlds.dat', dat.slice().buffer)]);
+    await expect.poll(() => page.locator('#archList option').count()).toBeGreaterThan(0);
+    const idx = await page.locator('#archList option').evaluateAll((os) => os.findIndex((o) => o.textContent!.endsWith('tmpla.fc2level')));
+    expect(idx).toBeGreaterThanOrEqual(0);
+    await page.locator('#archList').selectOption(String(idx));
+    await expect.poll(() => status().textContent(), { timeout: 15000 }).toContain('Загружено');
+    await page.waitForTimeout(500);
+    const png = (await page.locator('#gl').screenshot({ path: resolve(__dirname, '../dist/e2e-fc2-terrain.png') })).toString('base64');
+    const [red, blue, mixed] = await page.evaluate(async (b64) => {
+      const img = new Image();
+      img.src = 'data:image/png;base64,' + b64;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      const g = c.getContext('2d')!;
+      g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      let r = 0, b = 0, m = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const R = d[i]!, B = d[i + 2]!, G = d[i + 1]!;
+        if (Math.max(R, B) < 40 || G > Math.max(R, B) * 0.8) continue;
+        if (R > B * 2.5) r++; else if (B > R * 2.5) b++; else m++;
+      }
+      return [r, b, m];
+    }, png);
+    // красная основа; на половине второго сектора синий слой стоит через вершину — смешанный цвет на всей полосе
+    expect(red).toBeGreaterThan(500);
+    expect(mixed).toBeGreaterThan(300);
     expect(errors).toEqual([]);
   });
 

@@ -163,8 +163,11 @@ export class ViewerSession {
   async openFolderArchives(folder: Archive): Promise<number> {
     if (!folder.blobOf) return 0;
     const exts = new Set(this.registry.archives.filter((a) => a.openFromFolder).flatMap((a) => a.extensions));
-    const files: BlobFile[] = [];
+    // файлы-спутники (.dat к .fat Far Cry 2) — передаются вместе с архивами, сами не открываются
+    const companions = new Set(this.registry.archives.filter((a) => a.openFromFolder).flatMap((a) => a.companionExtensions ?? []));
+    const files: BlobFile[] = [], extra: BlobFile[] = [];
     for (const e of folder.entries) {
+      if (companions.has(extOf(e.path)) && !exts.has(extOf(e.path))) { const f = folder.blobOf(e); if (f) extra.push(f); continue; }
       if (!exts.has(extOf(e.path))) continue;
       const f = folder.blobOf(e);
       // то же расширение может быть у архивов другого движка (.db X-Ray) — их не трогаем
@@ -176,7 +179,7 @@ export class ViewerSession {
     }
     if (!files.length) return 0;
     const before = this.archives.length;
-    await this.addArchives(files);
+    await this.addArchives([...files, ...extra]);
     return this.archives.length - before;
   }
 

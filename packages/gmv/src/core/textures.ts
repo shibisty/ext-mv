@@ -72,6 +72,8 @@ export class TextureLibrary {
     }
     const t = this.loose.find((x) => x.base === base);
     if (t) return t.file;
+    // архивы, где имена известны не все (хеши путей): по точному пути из модели
+    for (const a of this.archives) { const e = a.findTexture?.(name); if (e) return a.fileOf(e); }
     // последний шанс: по имени файла в любом архиве (ZIP/PAK хранят только полные пути: prebuild/textures/pct/…)
     const hit = this.baseIndex().get(base);
     return hit ? hit[0].fileOf(hit[1]) : null;
