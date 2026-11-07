@@ -77,7 +77,7 @@ export class LevelBuilder {
       g.items = [];
       const P = g.proto;
       meshes.push({
-        name: g.name, texture: P.texture, material: P.material, normalMap: P.normalMap, surface: P.surface, color: P.color, alphaTest: P.alphaTest,
+        name: g.name, texture: P.texture, material: P.material, normalMap: P.normalMap, surface: P.surface, color: P.color, alphaTest: P.alphaTest, ...(P.image ? { image: P.image } : {}),
         vertexCount: g.nV, pos, nor, uv, bone: new Float32Array(0), weight: new Float32Array(0), indices, skinned: false, ...(g.hidden ? { defaultHidden: true } : {}),
       });
     }

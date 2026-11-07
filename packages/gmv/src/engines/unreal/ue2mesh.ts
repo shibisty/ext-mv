@@ -34,7 +34,7 @@ const skip = (r: UReader, n: number) => { r.need(n); r.pos += n; };
 interface MatInfo { name: string; image?: DecodedImage; alpha: 'none' | 'test' | 'blend'; twoSided: boolean; error?: string }
 const texCache = new WeakMap<UPackage, Map<number, Promise<DecodedImage>>>();
 
-async function material(pkg: UPackage, ref: number): Promise<MatInfo> {
+export async function material(pkg: UPackage, ref: number): Promise<MatInfo> {
   const name = ref ? pkg.objPath(ref) : '';
   if (!ref) return { name: '', alpha: 'none', twoSided: false };
   try {
@@ -49,7 +49,7 @@ async function material(pkg: UPackage, ref: number): Promise<MatInfo> {
   } catch (e) { return { name, alpha: 'none', twoSided: false, error: (e as Error).message }; }
 }
 
-function makeMesh(name: string, mat: MatInfo, P: number[], N: number[], U: number[], I: number[], B?: number[], W?: number[]): Mesh {
+export function makeMesh(name: string, mat: MatInfo, P: number[], N: number[], U: number[], I: number[], B?: number[], W?: number[]): Mesh {
   const nv = P.length / 3;
   return {
     name, texture: mat.name, vertexCount: nv, pos: Float32Array.from(P), nor: Float32Array.from(N), uv: Float32Array.from(U),
@@ -70,25 +70,36 @@ async function exportOf(main: VFile): Promise<{ pkg: UPackage; exp: UExport; r: 
 
 // ---------- StaticMesh ----------
 export async function loadUe2StaticMesh(main: VFile): Promise<Model> {
-  const { pkg, exp, r } = await exportOf(main);
+  const { pkg, exp } = await exportOf(main);
+  const sm = await staticMeshParts(pkg, exp);
+  if (!sm.meshes.length) throw new Error(`${exp.name}: в StaticMesh нет треугольников`);
+  const info = [`Unreal Engine 2 StaticMesh: ${pkg.objPath(pkg.exports.indexOf(exp) + 1)} (пакет v${pkg.ver}/${pkg.lic})`, `Секций ${sm.sections}, вершин ${sm.verts}, треугольников ${sm.tris}`];
+  if (sm.missing.length) info.push(`Материалы без текстуры: ${[...new Set(sm.missing)].join('; ')}`);
+  return { meshes: sm.meshes, skeleton: null, motions: [], bounds: boundsOf(sm.meshes), flipZ: false, defaultZUp: true, cameraYaw: 0, info };
+}
+
+/**
+ * Части StaticMesh в нашем пространстве (метры, отражённая Y), по секциям с материалами.
+ * skins — замены материалов секций (свойство Skins актора; ссылки в пакете skinPkg).
+ */
+export async function staticMeshParts(pkg: UPackage, exp: UExport, skins: number[] = [], skinPkg: UPackage = pkg): Promise<{ meshes: Mesh[]; missing: string[]; sections: number; verts: number; tris: number }> {
+  const r = await pkg.reader(exp);
   const props = readProps(pkg, r);
   skip(r, 25 + 16); // BoundingBox, BoundingSphere
   const sections = r.arr((x) => { x.i32(); return { first: x.u16(), minV: x.u16(), maxV: x.u16(), unk: x.u16(), faces: x.u16() }; }, 4096);
   skip(r, 25); // BoundingBox ещё раз
   const verts = r.arr((x) => [x.f32(), x.f32(), x.f32(), x.f32(), x.f32(), x.f32()]); r.i32();
-  const colors = r.arr((x) => x.bytes(4)); r.i32();
+  r.arr((x) => x.bytes(4)); r.i32(); // цвета
   r.arr((x) => x.bytes(4)); r.i32(); // альфа
   const uvs = r.arr((x) => { const d = x.arr((y) => [y.f32(), y.f32()]); x.i32(); x.i32(); return d; }, 16);
   const idx = r.arr((x) => x.u16()); r.i32();
   const mats = structArray(pkg, props.get('Materials'));
-  const useColor = props.get('UseVertexColor')?.value === true;
-  void colors; void useColor;
-  const meshes: Mesh[] = [], info: string[] = [`Unreal Engine 2 StaticMesh: ${pkg.objPath(pkg.exports.indexOf(exp) + 1)} (пакет v${pkg.ver}/${pkg.lic})`];
-  const uv0 = uvs[0] ?? [], missing: string[] = [];
+  const meshes: Mesh[] = [], missing: string[] = [];
+  const uv0 = uvs[0] ?? [];
   for (let s = 0; s < sections.length; s++) {
     const sec = sections[s]!;
     if (!sec.faces) continue;
-    const mat = await material(pkg, mats[s] ? propObj(mats[s]!, 'Material') : 0);
+    const mat = skins[s] ? await material(skinPkg, skins[s]!) : await material(pkg, mats[s] ? propObj(mats[s]!, 'Material') : 0);
     if (mat.error) missing.push(`${mat.name || '—'}: ${mat.error}`);
     const remap = new Map<number, number>(), P: number[] = [], N: number[] = [], U: number[] = [], I: number[] = [];
     for (let k = 0; k < sec.faces * 3; k++) {
@@ -105,10 +116,7 @@ export async function loadUe2StaticMesh(main: VFile): Promise<Model> {
     }
     if (I.length) meshes.push(makeMesh(`${s} · ${mat.name ? mat.name.split('.').pop() : 'без материала'}`, mat, P, N, U, I));
   }
-  if (!meshes.length) throw new Error(`${exp.name}: в StaticMesh нет треугольников`);
-  info.push(`Секций ${sections.length}, вершин ${verts.length}, треугольников ${idx.length / 3 | 0}`);
-  if (missing.length) info.push(`Материалы без текстуры: ${[...new Set(missing)].join("; ")}`);
-  return { meshes, skeleton: null, motions: [], bounds: boundsOf(meshes), flipZ: false, defaultZUp: true, cameraYaw: 0, info };
+  return { meshes, missing, sections: sections.length, verts: verts.length, tris: idx.length / 3 | 0 };
 }
 
 // ---------- SkeletalMesh ----------
@@ -214,6 +222,15 @@ export async function loadUe2SkeletalMesh(main: VFile): Promise<Model> {
       const part = /^(.+_m\d{3})_([a-z]{1,2})$/i.exec(exp.name), drop = /^drop_(.+_m\d{3}_t\d\d_[a-z]{1,2})_m\d\d$/i.exec(exp.name);
       if (drop) cands.unshift(drop[1]!);
       if (part) cands.push(new RegExp(`^${part[1]!.toLowerCase()}_t\\d\\d_${part[2]!.toLowerCase()}$`));
+      // варианты монстров: «ogre_mage_m00» → «ogre_t00», «wolf_bi_m00» → «wolf_t00», «virud_lizardman_shaman_a_m00» → «virud_lizardman_t00»;
+      // у части текстур в пакете только исходники «…_tSS_ori»
+      if (mm) {
+        const words = mm[1]!.split('_');
+        for (let k = words.length; k >= 1; k--) {
+          const stem = words.slice(0, k).join('_');
+          for (const suf of ['', '_ori', '_sh']) cands.push(`${stem}_t${ss}${suf}`);
+        }
+      }
       for (const c of cands) { const hit = typeof c === 'string' ? findMaterialByName(c) : findMaterialMatching(c); if (hit) { const g = await material(hit.pkg, hit.ref); if (g.image) { mat = { ...g, name: g.name + ' (по имени меша)' }; break; } } }
     }
     if (lm && lm.flags & 0x6) mat.alpha = mat.alpha === 'none' ? 'test' : mat.alpha;

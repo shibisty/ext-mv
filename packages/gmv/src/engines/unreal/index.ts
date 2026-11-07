@@ -33,6 +33,11 @@ export const unrealEngine = defineEngine({
       load: async (main) => (await import('./ue2mesh')).loadUe2StaticMesh(main),
     },
     {
+      id: 'ue2-map', title: 'Unreal Engine 2: карта (.unr — ландшафт и StaticMesh)', engine: 'unreal', extensions: ['unr'], status: 'beta',
+      sniff: (h) => (u32le(h, 0) === 0x9e2a83c1 || /^L\0i\0n\0e\0a\0g\0e\x002\0/.test(String.fromCharCode(...h.subarray(0, 16))) ? 1 : 0),
+      load: async (main) => (await import('./ue2map')).loadUe2Map(main),
+    },
+    {
       id: 'ue2-skeletalmesh', title: 'Unreal Engine 2: SkeletalMesh с анимациями (из пакета .ukx)', engine: 'unreal', extensions: ['ue2skm'], status: 'beta',
       load: async (main) => (await import('./ue2mesh')).loadUe2SkeletalMesh(main),
     },
@@ -44,9 +49,9 @@ export const unrealEngine = defineEngine({
     },
   ],
   games: [
-    { id: 'lineage2', group: 'Игры', title: 'Lineage II (Unreal Engine 2) — статика, персонажи и монстры', engine: 'unreal', formats: ['ue2-staticmesh', 'ue2-skeletalmesh'], status: 'beta', markers: ['System/l2.exe', 'StaticMeshes', 'SysTextures'],
+    { id: 'lineage2', group: 'Игры', title: 'Lineage II (Unreal Engine 2) — статика, персонажи и монстры', engine: 'unreal', formats: ['ue2-staticmesh', 'ue2-skeletalmesh', 'ue2-map'], status: 'beta', markers: ['System/l2.exe', 'StaticMeshes', 'SysTextures'],
       ui: { archives: true, archiveExts: ['usx', 'utx', 'ukx'], archiveLabel: 'Открыть пакеты…', zUp: true },
-      hint: 'Откройте «Папку игры» (папку клиента с StaticMeshes, Animations, Textures, SysTextures) — пакеты расшифруются и подключатся сами. Статика — объекты StaticMesh из .usx, персонажи и монстры — SkeletalMesh из .ukx с анимациями своего пакета; текстуры и материалы (Shader, FinalBlend) — из .utx. Поддержано шифрование Lineage2Ver111/121 (Prelude, C1–C4); RSA поздних хроник (Ver41x) — нет.' },
+      hint: 'Откройте «Папку игры» (папку клиента с StaticMeshes, Animations, Textures, SysTextures) — пакеты расшифруются и подключатся сами. Статика — объекты StaticMesh из .usx, персонажи и монстры — SkeletalMesh из .ukx с анимациями своего пакета; текстуры и материалы (Shader, FinalBlend) — из .utx. Карты MAPS/xx_yy.unr — ландшафт со слоями и все StaticMeshActor (меши и текстуры берутся из открытых пакетов). Поддержано шифрование Lineage2Ver111/121 (Prelude, C1–C4); RSA поздних хроник (Ver41x) — нет.' },
     { id: 'ue123', group: 'Игры', title: 'Unreal Engine 1–3 (Unreal, UT, UT2004, Gears…) — экспорт PSK/PSA', engine: 'unreal', formats: ['unreal-psk'], ui, status: 'bridge',
       hint: 'Экспортируйте модель утилитой UModel (UEViewer) в PSK/PSKX (+ PSA для анимаций, текстуры в TGA/PNG) и выберите «Папку игры» с экспортом. Нативные .upk/.u пока не читаются.' },
     { id: 'ue45', group: 'Игры', title: 'Unreal Engine 4–5 — экспорт PSK/PSA (FModel/UModel)', engine: 'unreal', formats: ['unreal-psk'], ui, status: 'bridge',

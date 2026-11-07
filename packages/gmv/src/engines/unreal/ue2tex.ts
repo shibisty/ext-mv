@@ -60,11 +60,17 @@ export async function resolveMaterial(pkg: UPackage, ref: number, resolve: ObjRe
 }
 
 /** Мип 0 текстуры в RGBA. */
-export async function decodeUeTexture(pkg: UPackage, e: UExport, resolve: ObjResolver): Promise<{ width: number; height: number; rgba: Uint8Array }> {
+/** Мип 0 как есть: формат, размеры, данные (для карт высот G16 и масок). */
+export async function readUeTextureMip(pkg: UPackage, e: UExport): Promise<{ fmt: number; w: number; h: number; data: Uint8Array; props: Map<string, UProp> }> {
   const r = await pkg.reader(e), props = readProps(pkg, r), fmt = propNum(props, 'Format');
   if (pkg.ver >= 123 && pkg.lic >= 16) r.i32(); // Lineage II: поле после свойств у всех материалов
   const m = readMips(r);
   if (!m) throw new Error(`${e.name}: у текстуры нет мипов`);
+  return { fmt, ...m, props };
+}
+
+export async function decodeUeTexture(pkg: UPackage, e: UExport, resolve: ObjResolver): Promise<{ width: number; height: number; rgba: Uint8Array }> {
+  const { fmt, props, ...m } = await readUeTextureMip(pkg, e);
   const { w, h, data } = m, n = w * h, out = new Uint8Array(n * 4);
   const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
   switch (fmt) {

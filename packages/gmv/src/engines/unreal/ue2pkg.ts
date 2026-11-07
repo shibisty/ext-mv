@@ -204,5 +204,12 @@ export function readProps(pkg: UPackage, r: UReader): Map<string, UProp> {
   return out;
 }
 
+/** Кадр состояния перед свойствами у объектов с RF_HasStack (акторы карт): Node, StateNode, ProbeMask (u64), LatentAction, [Offset]. */
+export function skipStateFrame(e: UExport, r: UReader): void {
+  if (!(e.flags & 0x02000000)) return;
+  const node = r.idx(); r.idx(); r.u32(); r.u32(); r.i32();
+  if (node) r.idx();
+}
+
 export const propNum = (p: Map<string, UProp>, k: string, def = 0): number => { const v = p.get(k)?.value; return typeof v === 'number' ? v : typeof v === 'boolean' ? +v : def; };
 export const propObj = (p: Map<string, UProp>, k: string): number => { const v = p.get(k)?.value; return typeof v === 'number' ? v : 0; };
