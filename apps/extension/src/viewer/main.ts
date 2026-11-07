@@ -1,7 +1,7 @@
 // Страница просмотрщика: стартовое окно выбора игры, верхняя панель инструментов, ресурсы слева, сцена/меши/анимации справа.
 import {
   autoLayers, XRAY_FX_PART, buildDiagnostics, createRegistry, engineTitle, presetText, tr, translatePlacement, instanceAt, rotatePlacement, sceneTree, ViewerSession,
-  type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Motion, type RayHit, type SceneNode,
+  type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Motion, type NodeLayer, type NodeMotion, type RayHit, type SceneNode,
 } from 'gmv';
 import { allEngines } from 'gmv/engines';
 import { configureAssimp } from 'gmv/engines/assimp';
@@ -56,6 +56,7 @@ try {
       $('lblTime').textContent = `${s.time.toFixed(2)} / ${m.duration.toFixed(2)}`;
     },
     onEnded: () => { button('btnPlay').textContent = '▶'; },
+    onAim: () => syncAim(),
     onPick: (hit) => pickHit(hit),
     onToolDrag: (dx, dy, e) => (viewer.tool === 'move' ? moveSelected(e, dx, dy) : rotateSelected(dx * 0.01)),
   });
@@ -209,6 +210,9 @@ function motionLabel(m: Motion): string {
 function rebuildLayers(m: Motion | null): Motion | null {
   const sel = select('motionLayer'), lbl = $('lblLayer');
   sel.textContent = '';
+  const cap = lbl.querySelector<HTMLElement>('[data-i]');
+  if (cap) cap.textContent = t(m?.kind === 'node' ? 'anim.layerNode' : 'anim.layer');
+  if (m?.kind === 'node') return rebuildNodeLayers(m);
   if (!m || m.kind !== 'xray' || !m.part || m.part === XRAY_FX_PART) { lbl.hidden = true; return m; }
   const auto = autoLayers(m, session.motions);
   const add = (parent: HTMLElement, v: string, text: string) => { const o = document.createElement('option'); o.value = v; o.textContent = text; parent.append(o); };
@@ -225,7 +229,63 @@ function rebuildLayers(m: Motion | null): Motion | null {
   sel.value = 'auto';
   return { ...m, layers: auto };
 }
+/** Слои поверх анимации узлов (Enfusion: прицеливание, дыхание): «авто» — подобранный движком слой. */
+function rebuildNodeLayers(m: NodeMotion): Motion {
+  const sel = select('motionLayer'), lbl = $('lblLayer'), pool = m.layerPool ?? [];
+  const shown: NodeMotion = { ...m, layers: [] };
+  if (!pool.length) { lbl.hidden = true; return shown; }
+  const add = (parent: HTMLElement, v: string, text: string) => { const o = document.createElement('option'); o.value = v; o.textContent = text; parent.append(o); };
+  add(sel, 'auto', t('anim.layerAuto', { names: m.layerAuto?.join(' + ') || '—' }));
+  add(sel, 'none', t('anim.layerOff'));
+  const groups = new Map<string, HTMLOptGroupElement>();
+  pool.forEach((x, i) => {
+    const dir = x.name.includes('/') ? x.name.slice(0, x.name.lastIndexOf('/')) : '';
+    let g = groups.get(dir);
+    if (!g) { g = document.createElement('optgroup'); g.label = dir || '—'; groups.set(dir, g); sel.append(g); }
+    add(g, String(i), x.name.slice(x.name.lastIndexOf('/') + 1));
+  });
+  lbl.hidden = false;
+  sel.value = 'auto';
+  void applyNodeLayers(shown, 'auto');
+  return shown;
+}
+async function applyNodeLayers(shown: NodeMotion, v: string): Promise<void> {
+  const pool = shown.layerPool ?? [];
+  const pick = v === 'none' ? [] : v === 'auto' ? pool.filter((p) => shown.layerAuto?.includes(p.name)) : [pool[+v]].filter((x): x is NodeMotion => !!x);
+  const layers: NodeLayer[] = [];
+  for (let p of pick) {
+    if (p.load) {
+      try {
+        const idx = pool.indexOf(p), full = (await p.load()) as NodeMotion;
+        if (idx >= 0) pool[idx] = full;
+        p = full;
+      } catch (e) { setStatus(t('anim.error', { error: (e as Error).message }), true); continue; }
+    }
+    layers.push({ motion: p, ...(p.asLayer?.(p) ?? {}) });
+  }
+  shown.layers = layers;
+  syncAim();
+  if (layers.length) setStatus(t('anim.layerOn', { names: layers.map((l) => l.motion.name.slice(l.motion.name.lastIndexOf('/') + 1)).join(' + ') }));
+}
+/** Ползунки прицела: показаны, если у слоя есть сетка поз; +100 — вправо/вверх (столбец 0 — вправо, строка 2 — вверх). */
+function syncAim(): void {
+  const g = viewer.aimGrid();
+  $('aimRow').hidden = !g;
+  if (!g) return;
+  input('rngAimX').value = String(Math.round((1 - g.x) * 100));
+  input('rngAimY').value = String(Math.round((g.y - 1) * 100));
+}
+const aimInput = () => {
+  const g = viewer.aimGrid();
+  if (!g) return;
+  g.x = Math.max(0, Math.min(g.cols - 1, 1 - +input('rngAimX').value / 100));
+  g.y = Math.max(0, Math.min(g.rows - 1, 1 + +input('rngAimY').value / 100));
+};
+input('rngAimX').oninput = aimInput;
+input('rngAimY').oninput = aimInput;
 select('motionLayer').onchange = () => {
+  const cur = viewer.state.motion;
+  if (cur?.kind === 'node') { void applyNodeLayers(cur, select('motionLayer').value); return; }
   const base = session.motions[curMotion];
   if (!base || base.kind !== 'xray') return;
   const v = select('motionLayer').value, auto = autoLayers(base, session.motions);
@@ -270,6 +330,7 @@ async function selectMotion(i: number): Promise<void> {
   }
   if (curMotion !== i) return;
   viewer.setMotion(rebuildLayers(m));
+  syncAim();
   input('chkInvQuat').checked = viewer.state.invert;
   button('btnPlay').textContent = '⏸';
 }

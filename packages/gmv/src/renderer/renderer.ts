@@ -10,16 +10,44 @@ precision highp float;
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor; layout(location=2) in vec2 aUV;
 layout(location=3) in vec4 aBone; layout(location=4) in vec4 aWeight; layout(location=5) in vec4 aTan; layout(location=6) in vec2 aUV2; layout(location=7) in float aAlpha;
 uniform mat4 uProj, uMV, uModel; uniform sampler2D uBones; uniform bool uSkinned;
-out vec3 vN, vP; out vec4 vT; out vec2 vUV, vUV2; out float vY, vA;
+out vec3 vN, vP, vO; out vec4 vT; out vec2 vUV, vUV2; out float vY, vA;
 mat4 bm(float f){ int i=int(f+0.5); return mat4(texelFetch(uBones,ivec2(0,i),0),texelFetch(uBones,ivec2(1,i),0),texelFetch(uBones,ivec2(2,i),0),texelFetch(uBones,ivec2(3,i),0)); }
 void main(){
   vec4 p=vec4(aPos,1.0); vec3 n=aNor, t=aTan.xyz;
   if(uSkinned){ mat4 m=bm(aBone.x)*aWeight.x; if(aWeight.y!=0.0)m+=bm(aBone.y)*aWeight.y; if(aWeight.z!=0.0)m+=bm(aBone.z)*aWeight.z; if(aWeight.w!=0.0)m+=bm(aBone.w)*aWeight.w; p=m*p; n=mat3(m)*n; t=mat3(m)*t; }
-  vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vUV2=aUV2; vA=aAlpha; vY=(uModel*p).y; gl_Position=uProj*q;
+  vO=aPos; vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vUV2=aUV2; vA=aAlpha; vY=(uModel*p).y; gl_Position=uProj*q;
 }`;
 const FS = `#version 300 es
 precision highp float;
-in vec3 vN, vP; in vec4 vT; in vec2 vUV, vUV2; in float vY, vA; out vec4 o;
+in vec3 vN, vP, vO; in vec4 vT; in vec2 vUV, vUV2; in float vY, vA; out vec4 o;
+// слои ландшафта: номер слоя на тексель (uTIdx, R8), текстуры слоёв (массив), период повтора, подкраска, средний цвет
+uniform bool uTerr, uTHasN, uTHasM; uniform highp sampler2D uTIdx; uniform highp sampler2DArray uTLay, uTNrm, uTMid; uniform vec2 uTPar[32], uTMPar[32]; uniform vec3 uTMean[32], uTMMean[32]; uniform float uTFade;
+uniform mat4 uMV;
+// нормаль слоёв ландшафта (касательное пространство: X, Z модели) и AO — из terrainColor
+vec3 gTerrN=vec3(0.0,0.0,1.0); float gTerrAO=1.0;
+vec3 terrainColor(vec3 sat){
+  vec2 sz=vec2(textureSize(uTIdx,0)), f=vUV*sz-0.5, w=fract(f); ivec2 i0=ivec2(floor(f)), mx=ivec2(sz)-1;
+  vec3 acc=vec3(0.0); vec2 nxy=vec2(0.0); float ao=0.0;
+  for(int k=0;k<4;k++){
+    ivec2 d=ivec2(k&1,k>>1);
+    int L=int(texelFetch(uTIdx,clamp(i0+d,ivec2(0),mx),0).r*255.0+0.5);
+    float wk=(d.x==1?w.x:1.0-w.x)*(d.y==1?w.y:1.0-w.y);
+    if(wk<=0.0) continue;
+    vec2 pr=uTPar[L], tuv=vO.xz/pr.x;
+    vec3 c=texture(uTLay,vec3(tuv,float(L))).rgb;
+    // средний масштаб: изменчивость (MiddleScaleUV) — отношение к среднему цвету, сила MiddleBCRBlend
+    if(uTHasM){ vec2 mp=uTMPar[L]; if(mp.y>0.0){ vec3 mc=texture(uTMid,vec3(vO.xz/mp.x,float(L))).rgb; c*=mix(vec3(1.0),mc/max(uTMMean[L],vec3(0.03)),mp.y); } }
+    if(uTHasN){ vec4 nh=texture(uTNrm,vec3(tuv,float(L))); nxy+=wk*(nh.rg*2.0-1.0); ao+=wk*nh.a; } else ao+=wk;
+    // подкраска цветовой картой: узор слоя, тон и яркость — от карты (SatMapBlend)
+    acc+=wk*mix(c,c*sat/max(uTMean[L],vec3(0.03)),pr.y);
+  }
+  // вдали — только цветовая карта (как у игры: детали до DetailMaxDistance)
+  float fd=clamp((length(vP)-uTFade*0.5)/(uTFade*0.5),0.0,1.0);
+  // DirectX: зелёный — к −V; V по +Z модели
+  nxy=vec2(nxy.x,-nxy.y)*(1.0-fd);
+  gTerrN=vec3(nxy,sqrt(max(0.0,1.0-dot(nxy,nxy)))); gTerrAO=mix(ao,1.0,fd);
+  return mix(clamp(acc*mix(1.0,ao,0.5),0.0,1.0),sat,fd);
+}
 // карта освещения уровня (яркость в R) по второму набору UV
 uniform sampler2D uLm; uniform bool uHasLm; uniform float uLmK;
 // срез сверху: всё выше uClipY (мировая высота показа) не рисуется — чтобы заглянуть внутрь уровня
@@ -54,11 +82,18 @@ void main(){
   if(uFlat){ o=vec4(uFlatColor,uFlatAlpha); return; }
   vec4 c=uHasTex?texture(uTex,vUV):vec4(uBase,1.0);
   if(uAlphaTest&&c.a<0.5) discard;
+  if(uTerr) c.rgb=terrainColor(c.rgb);
   // нормали моделей бывают развёрнуты как угодно (обход граней у игр разный, сцена может быть отражена):
   // освещаем сторону, обращённую к камере
   vec3 V=normalize(-vP), N=normalize(vN);
   float side=dot(N,V)<0.0?-1.0:1.0;
   vec3 Ng=N*side, Nw=Ng, nt=vec3(0.0,0.0,1.0);
+  if(uTerr&&uTHasN){
+    vec3 T=mat3(uMV)*vec3(1.0,0.0,0.0), B=mat3(uMV)*vec3(0.0,0.0,1.0);
+    T=normalize(T-Ng*dot(Ng,T)); B=normalize(B-Ng*dot(Ng,B)-T*dot(T,B));
+    vec3 tn=normalize(vec3(gTerrN.xy*uNI,max(gTerrN.z,0.001)));
+    Nw=normalize(T*tn.x+B*tn.y+Ng*tn.z);
+  }
   if(uHasNorm){
     vec3 T=vT.xyz-N*dot(N,vT.xyz);
     if(dot(T,T)>1e-10){
@@ -143,6 +178,8 @@ export interface DrawOptions {
   normalStrength?: number;
   /** Срез сверху: не рисовать выше этой высоты (координаты показа, Y вверх). */
   clipY?: number;
+  /** Слои поверхности ландшафта вблизи (если есть). По умолчанию включено. */
+  terrainLayers?: boolean;
   /** Дальность прорисовки в единицах модели (части уровня дальше не рисуются); по умолчанию — без ограничения. */
   drawDistance?: number;
 }
@@ -167,6 +204,8 @@ interface GpuMesh {
   /** Индексы на GPU (скрытые экземпляры — вырожденные треугольники). */
   idx: Uint16Array | Uint32Array;
   norm: WebGLTexture | null; normPack: NormalPacking; surf: WebGLTexture | null;
+  /** Карта слоёв ландшафта (R8, ближайший). */
+  tIdx: WebGLTexture | null;
   bPos: WebGLBuffer; bNor: WebGLBuffer; bUV: WebGLBuffer; bBone: WebGLBuffer | null; bWt: WebGLBuffer | null; bTan: WebGLBuffer; bIdx: WebGLBuffer; bUV2: WebGLBuffer | null;
   /** Прозрачность по вершинам (слои ландшафта), null — 1. */
   bA: WebGLBuffer | null;
@@ -202,6 +241,14 @@ export class Renderer {
   private rawBounds: Bounds = { min: [0, 0, 0], max: [1, 1, 1] };
   private highlight: Array<{ mesh: number; iStart: number; iCount: number }> = [];
   private lmTex: WebGLTexture | null = null;
+  private layTex: WebGLTexture | null = null;
+  private layNrm: WebGLTexture | null = null;
+  private layMid: WebGLTexture | null = null;
+  private layMPar = new Float32Array(64);
+  private layMMean = new Float32Array(96);
+  private layPar = new Float32Array(64);
+  private layMean = new Float32Array(96);
+  private layFade = 150;
   private lmScale = 1;
   /** Что нарисовано в последнем кадре (после отсечения): треугольники, вызовы, клеток всего. */
   drawStats = { tris: 0, calls: 0, cells: 0 };
@@ -224,6 +271,7 @@ export class Renderer {
     const u = (p: WebGLProgram, n: string) => gl.getUniformLocation(p, n);
     this.U = { proj: u(this.p, 'uProj'), mv: u(this.p, 'uMV'), model: u(this.p, 'uModel'), clipY: u(this.p, 'uClipY'), bones: u(this.p, 'uBones'), skinned: u(this.p, 'uSkinned'), tex: u(this.p, 'uTex'),
       hasTex: u(this.p, 'uHasTex'), alpha: u(this.p, 'uAlphaTest'), flat: u(this.p, 'uFlat'), flatColor: u(this.p, 'uFlatColor'), flatAlpha: u(this.p, 'uFlatAlpha'), lm: u(this.p, 'uLm'), hasLm: u(this.p, 'uHasLm'), lmK: u(this.p, 'uLmK'), base: u(this.p, 'uBase'),
+      terr: u(this.p, 'uTerr'), tIdx: u(this.p, 'uTIdx'), tLay: u(this.p, 'uTLay'), tNrm: u(this.p, 'uTNrm'), tMid: u(this.p, 'uTMid'), tHasN: u(this.p, 'uTHasN'), tHasM: u(this.p, 'uTHasM'), tMPar: u(this.p, 'uTMPar'), tMMean: u(this.p, 'uTMMean'), tPar: u(this.p, 'uTPar'), tMean: u(this.p, 'uTMean'), tFade: u(this.p, 'uTFade'),
       norm: u(this.p, 'uNorm'), hasNorm: u(this.p, 'uHasNorm'), normPack: u(this.p, 'uNormPack'), normY: u(this.p, 'uNormY'), mirror: u(this.p, 'uMirror'), view: u(this.p, 'uView'), ni: u(this.p, 'uNI'), surf: u(this.p, 'uSurf'), hasSurf: u(this.p, 'uHasSurf') };
     this.LU = { proj: u(this.lp, 'uProj'), mv: u(this.lp, 'uMV'), color: u(this.lp, 'uColor') };
     this.boneTex = gl.createTexture()!;
@@ -264,11 +312,15 @@ export class Renderer {
       if (m.tex) gl.deleteTexture(m.tex);
       if (m.norm) gl.deleteTexture(m.norm);
       if (m.surf) gl.deleteTexture(m.surf);
+      if (m.tIdx) gl.deleteTexture(m.tIdx);
       if (m.vaoS) gl.deleteVertexArray(m.vaoS);
       for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine, m.bUV2, m.bA, m.bIdxS]) if (b) gl.deleteBuffer(b);
     }
     this.meshes = [];
     this.highlight = [];
+    if (this.layTex) { gl.deleteTexture(this.layTex); this.layTex = null; }
+    if (this.layNrm) { gl.deleteTexture(this.layNrm); this.layNrm = null; }
+    if (this.layMid) { gl.deleteTexture(this.layMid); this.layMid = null; }
   }
 
   /** Полностью освободить контекст (при уничтожении просмотрщика). */
@@ -294,7 +346,7 @@ export class Renderer {
       const bBone = skin ? this.buf(gl.ARRAY_BUFFER, d.bone) : null, bWt = skin ? this.buf(gl.ARRAY_BUFFER, d.weight) : null, bTan = this.buf(gl.ARRAY_BUFFER, computeTangents(d));
       const bUV2 = d.uv2 ? this.buf(gl.ARRAY_BUFFER, d.uv2) : null, bA = d.vertexAlpha ? this.buf(gl.ARRAY_BUFFER, d.vertexAlpha) : null;
       const vao = gl.createVertexArray()!;
-      const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
+      const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, tIdx: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
         bPos, bNor, bUV, bBone, bWt, bTan, bUV2, bA, vao, bIdx: null as unknown as WebGLBuffer, box: still && !d.dynamic ? meshBox(d.pos, d.indices) : null };
       gl.bindVertexArray(vao);
       this.attribs(m);
@@ -309,9 +361,11 @@ export class Renderer {
           m.bIdxS = this.buf(gl.ELEMENT_ARRAY_BUFFER, L.sorted);
         }
       }
+      if (d.terrainIndex && model.terrainLayers) m.tIdx = this.uploadR8(d.terrainIndex);
       this.meshes.push(m);
     }
     gl.bindVertexArray(null);
+    this.setTerrainLayers(model.terrainLayers ?? null);
     this.boneCount = model.skeleton ? model.skeleton.n : 0;
     this.skelN = 0;
     this.flipOn = !!model.flipZ;
@@ -351,6 +405,58 @@ export class Renderer {
     this.lmScale = lm.scale ?? 1;
   }
   get hasLightmap(): boolean { return !!this.lmTex; }
+
+  private uploadR8(img: { width: number; height: number; data: Uint8Array }): WebGLTexture {
+    const gl = this.gl, t = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, img.width, img.height, 0, gl.RED, gl.UNSIGNED_BYTE, img.data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+  /** Слои поверхности ландшафта: текстуры одного размера — в массив текстур, параметры — в uniform-массивы (до 32). */
+  /** Массив текстур одного размера (слои ландшафта), с mip-уровнями и повтором. */
+  private uploadArray(images: readonly DecodedImage[], unit: number): WebGLTexture | null {
+    const gl = this.gl, n = Math.min(32, images.length);
+    if (!n) return null;
+    const W = images[0]!.width, H = images[0]!.height, t = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA, W, H, n, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    for (let i = 0; i < n; i++) { const im = images[i]!; if (im.rgba && im.width === W && im.height === H) gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, W, H, 1, gl.RGBA, gl.UNSIGNED_BYTE, im.rgba); }
+    gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    if (this.aniso) gl.texParameterf(gl.TEXTURE_2D_ARRAY, this.aniso.TEXTURE_MAX_ANISOTROPY_EXT, 8);
+    return t;
+  }
+  /** Слои поверхности ландшафта: текстуры — в массивы, параметры — в uniform-массивы (до 32). */
+  private setTerrainLayers(L: Model['terrainLayers'] | null): void {
+    const gl = this.gl;
+    for (const k of ['layTex', 'layNrm', 'layMid'] as const) { const t = this[k]; if (t) { gl.deleteTexture(t); this[k] = null; } }
+    if (!L || !L.images.length) return;
+    const n = Math.min(32, L.images.length);
+    this.layTex = this.uploadArray(L.images, 6);
+    if (L.normals?.length === L.images.length) this.layNrm = this.uploadArray(L.normals, 7);
+    if (L.middle?.length === L.images.length) this.layMid = this.uploadArray(L.middle, 8);
+    this.layPar.fill(0); this.layMean.fill(0.5); this.layMPar.fill(0); this.layMMean.fill(0.5);
+    for (let i = 0; i < n; i++) {
+      this.layPar[i * 2] = L.period[i]! > 0 ? L.period[i]! : 4; this.layPar[i * 2 + 1] = L.tint[i] ?? 0.5;
+      const m = L.mean[i] ?? [0.5, 0.5, 0.5];
+      this.layMean[i * 3] = m[0]; this.layMean[i * 3 + 1] = m[1]; this.layMean[i * 3 + 2] = m[2];
+      this.layMPar[i * 2] = L.midPeriod?.[i] ?? 75; this.layMPar[i * 2 + 1] = L.midBlend?.[i] ?? 0;
+      const mm = L.midMean?.[i] ?? [0.5, 0.5, 0.5];
+      this.layMMean[i * 3] = mm[0]; this.layMMean[i * 3 + 1] = mm[1]; this.layMMean[i * 3 + 2] = mm[2];
+    }
+    this.layFade = L.fade > 0 ? L.fade : 150;
+  }
 
   /** Покадровая вершинная анимация (MD2/MD3/MDL): перезалить позиции и нормали. */
   updateGeometry(): void {
@@ -546,6 +652,23 @@ export class Renderer {
     gl.uniform1f(this.U.lmK!, this.lmScale * (o.lightmapScale ?? 1));
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this.lmTex);
+    gl.uniform1i(this.U.tIdx!, 5);
+    gl.uniform1i(this.U.tLay!, 6);
+    gl.uniform2fv(this.U.tPar!, this.layPar);
+    gl.uniform3fv(this.U.tMean!, this.layMean);
+    gl.uniform1f(this.U.tFade!, this.layFade);
+    gl.activeTexture(gl.TEXTURE6);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.layTex);
+    gl.uniform1i(this.U.tNrm!, 7);
+    gl.uniform1i(this.U.tMid!, 8);
+    gl.uniform1i(this.U.tHasN!, this.layNrm && o.normals !== false ? 1 : 0);
+    gl.uniform1i(this.U.tHasM!, this.layMid ? 1 : 0);
+    gl.uniform2fv(this.U.tMPar!, this.layMPar);
+    gl.uniform3fv(this.U.tMMean!, this.layMMean);
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.layNrm);
+    gl.activeTexture(gl.TEXTURE8);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.layMid);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.boneTex);
     gl.enable(gl.POLYGON_OFFSET_FILL);
@@ -570,6 +693,10 @@ export class Renderer {
       gl.uniform1i(this.U.hasSurf!, sf ? 1 : 0);
       gl.uniform1i(this.U.alpha!, o.alpha || m.data.alphaTest ? 1 : 0);
       gl.uniform1i(this.U.hasLm!, this.lmTex && m.data.uv2 && o.lightmap !== false ? 1 : 0);
+      const terr = !!(has && m.tIdx && this.layTex && o.terrainLayers !== false);
+      gl.uniform1i(this.U.terr!, terr ? 1 : 0);
+      gl.activeTexture(gl.TEXTURE5);
+      gl.bindTexture(gl.TEXTURE_2D, terr ? m.tIdx : null);
       if (m.cells && m.vaoS) {
         gl.bindVertexArray(m.vaoS);
         if (m.sortDirty) { gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, m.cells.sorted); m.sortDirty = false; }

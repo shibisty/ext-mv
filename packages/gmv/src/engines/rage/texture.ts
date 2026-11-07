@@ -19,7 +19,7 @@ function bc4Block(u8: Uint8Array, p: number, out: Uint8Array) {
     bits >>>= 3; nb -= 3;
   }
 }
-function decodeBC45(u8: Uint8Array, off: number, w: number, h: number, two: boolean): Uint8Array {
+export function decodeBC45(u8: Uint8Array, off: number, w: number, h: number, two: boolean): Uint8Array {
   const out = new Uint8Array(w * h * 4), r = new Uint8Array(16), g = new Uint8Array(16), bw = (w + 3) >> 2, bh = (h + 3) >> 2;
   let p = off;
   for (let by = 0; by < bh; by++)

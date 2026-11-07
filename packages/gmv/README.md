@@ -8,7 +8,7 @@
 |---|---|
 | `gmv` | ядро: типы, `Registry`, `createRegistry`, `ViewerSession`, `TextureLibrary`, архивы ZIP и «Папка игры», zlib/LZ4, DDS/TGA/PCX, `buildDiagnostics` |
 | `gmv/engines` | `allEngines` — все движки |
-| `gmv/engines/<id>` | один движок: `xray`, `gamebryo`, `renderware`, `idtech`, `valve`, `unreal`, `cast`, `ea`, `cryengine`, `hpl`, `beamng`, `arma`, `rage`, `spintires`, `assimp`; вспомогательный `collada` (быстрый разбор .dae) |
+| `gmv/engines/<id>` | один движок: `xray`, `gamebryo`, `renderware`, `idtech`, `valve`, `unreal`, `cast`, `ea`, `cryengine`, `hpl`, `beamng`, `arma`, `enfusion`, `rage`, `spintires`, `metro`, `lithtech`, `vostok`, `dunia`, `assimp`; вспомогательный `collada` (быстрый разбор .dae) |
 | `gmv/renderer` | `Renderer`, `OrbitCamera`, `ModelViewer` |
 | `gmv/iife` | `dist/gmv.iife.js` для `<script>`: глобальный `GMV` со всем перечисленным и `GMV.mount(canvas)` |
 

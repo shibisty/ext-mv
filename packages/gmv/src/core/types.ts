@@ -119,6 +119,34 @@ export interface Mesh {
   uv2?: Float32Array;
   /** Прозрачность по вершинам (0..1): слой ландшафта поверх основы — рисуется после непрозрачных мешей, с наложением. */
   vertexAlpha?: Float32Array;
+  /**
+   * Карта слоёв ландшафта (номер слоя Model.terrainLayers на тексель, по UV меша 0..1): вблизи вместо одной цветовой
+   * карты (image) рисуются повторяющиеся текстуры слоёв, подкрашенные ею.
+   */
+  terrainIndex?: { width: number; height: number; data: Uint8Array };
+}
+
+/** Слои поверхности ландшафта: текстуры одного размера и параметры показа. */
+export interface TerrainLayers {
+  /** Текстуры слоёв (одного размера, степень двойки). */
+  images: DecodedImage[];
+  /** Период повтора текстуры в единицах модели (по X и Z координат меша). */
+  period: number[];
+  /** 0..1: насколько слой подкрашивается цветовой картой меша. */
+  tint: number[];
+  /** Средний цвет текстуры слоя (0..1) — для подкраски. */
+  mean: Array<[number, number, number]>;
+  /** Дальность, на которой слои переходят в цветовую карту. */
+  fade: number;
+  /** Нормали слоёв (тот же размер, что images): RG — XY касательной нормали (DirectX), A — AO. */
+  normals?: DecodedImage[];
+  /** Средний масштаб: текстуры изменчивости (свой размер), период, сила, средний цвет. */
+  middle?: DecodedImage[];
+  midPeriod?: number[];
+  midBlend?: number[];
+  midMean?: Array<[number, number, number]>;
+  /** Имена (для сведений). */
+  names?: string[];
 }
 
 /** Запечённое освещение уровня (одна карта на модель): яркость в R, UV — Mesh.uv2. */
@@ -137,6 +165,24 @@ export interface NodeChannel {
   pos: Keys<number[]> | null;
   rot: Keys<number[]> | null;
   scl: Keys<number[]> | null;
+  /** Аддитивная дорожка как смещение (перенос + поворот [w,x,y,z]) — применяется так, когда анимация — слой поверх другой. */
+  add?: { pos: Keys<number[]> | null; rot: Keys<number[]> | null };
+}
+
+/** Слой поверх основной анимации узлов: аддитивные каналы складываются, остальные заменяют позу (в пределах маски). */
+export interface NodeLayer {
+  motion: NodeMotion;
+  /** Постоянный кадр слоя (поза прицеливания — средний кадр сетки направлений); нет — играет по времени. */
+  frame?: number;
+  /** Номера узлов, которые слой может менять; нет — все. */
+  mask?: ReadonlySet<number>;
+  /** Только дополнять: узлы, у которых есть канал в основной анимации, слой не трогает (хват оружия у NPC — свой). */
+  fill?: boolean;
+  /**
+   * Слой — сетка поз (кадр = строка·cols + столбец), например направления прицела: x — столбец, y — строка
+   * (дробные: смешиваются 4 соседних кадра). Перекрывает frame.
+   */
+  grid?: { cols: number; rows: number; x: number; y: number };
 }
 
 interface MotionBase {
@@ -155,6 +201,14 @@ export interface NodeMotion extends MotionBase {
   kind: 'node';
   tps: number;
   chan: Map<number, NodeChannel>;
+  /** Слои поверх (прицеливание, дыхание). */
+  layers?: NodeLayer[];
+  /** Анимации, которые можно положить слоем (для выбора в интерфейсе; могут загружаться при выборе). */
+  layerPool?: NodeMotion[];
+  /** Имена из layerPool, подобранные слоем по умолчанию. */
+  layerAuto?: string[];
+  /** Как класть эту анимацию слоем (кадр, маска) — задаёт движок. */
+  asLayer?: (m: NodeMotion) => Omit<NodeLayer, 'motion'>;
 }
 /** Анимация X-Ray (OGF/OMF): квантованные кватернионы + позиции по кадрам. */
 export interface XrayTrack {
@@ -222,6 +276,8 @@ export interface Model {
   instances?: InstancedScene;
   /** Карта освещения уровня (Metro level.lmap_pc). */
   lightmap?: Lightmap;
+  /** Слои поверхности ландшафта (Mesh.terrainIndex). */
+  terrainLayers?: TerrainLayers;
   skeleton: SkeletonRuntime | null;
   motions: Motion[];
   bounds: Bounds;

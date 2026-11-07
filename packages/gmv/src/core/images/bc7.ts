@@ -33,44 +33,52 @@ const MODES = [
   { ns: 2, pb: 6, rb: 0, isb: 0, cb: 5, ab: 5, epb: 1, spb: 0, ib: 2, ib2: 0 },
 ];
 
+const EP = new Int32Array(24), IDX = new Uint8Array(16), IDX2 = new Uint8Array(16), WD = new Uint32Array(4);
+
 function decodeBlock(src: Uint8Array, off: number, out: Uint8Array /* 64 */): void {
+  // 128 бит блока — четыре слова; чтение по n бит младшими первыми
+  for (let k = 0; k < 4; k++) WD[k] = (src[off + k * 4]! | (src[off + k * 4 + 1]! << 8) | (src[off + k * 4 + 2]! << 16) | (src[off + k * 4 + 3]! << 24)) >>> 0;
   let bit = 0;
   const get = (n: number): number => {
-    let v = 0;
-    for (let i = 0; i < n; i++) { const b = bit + i; v |= ((src[off + (b >> 3)]! >> (b & 7)) & 1) << i; }
+    if (!n) return 0;
+    const w = bit >>> 5, sh = bit & 31;
+    let v = WD[w]! >>> sh;
+    if (sh + n > 32 && w < 3) v |= WD[w + 1]! << (32 - sh);
     bit += n;
-    return v;
+    return (v & ((1 << n) - 1)) >>> 0;
   };
   let mode = 0;
   while (mode < 8 && !get(1)) mode++;
   if (mode >= 8) { out.fill(0); return; }
   const m = MODES[mode]!;
   const part = get(m.pb), rot = get(m.rb), isel = get(m.isb);
-  const ns = m.ns, ne = ns * 2;
-  const ep: number[][] = Array.from({ length: ne }, () => [0, 0, 0, 255]);
-  for (let c = 0; c < 3; c++) for (let e = 0; e < ne; e++) ep[e]![c] = get(m.cb);
-  if (m.ab) for (let e = 0; e < ne; e++) ep[e]![3] = get(m.ab);
+  const ns = m.ns, ne = ns * 2, ep = EP;
+  for (let e = 0; e < ne; e++) ep[e * 4 + 3] = 255;
+  for (let c = 0; c < 3; c++) for (let e = 0; e < ne; e++) ep[e * 4 + c] = get(m.cb);
+  if (m.ab) for (let e = 0; e < ne; e++) ep[e * 4 + 3] = get(m.ab);
   // P-биты
-  if (m.epb) { for (let e = 0; e < ne; e++) { const p = get(1); for (let c = 0; c < 4; c++) if (c < 3 || m.ab) ep[e]![c] = (ep[e]![c]! << 1) | p; } }
-  else if (m.spb) { for (let s = 0; s < ns; s++) { const p = get(1); for (const e of [s * 2, s * 2 + 1]) for (let c = 0; c < 3; c++) ep[e]![c] = (ep[e]![c]! << 1) | p; } }
+  if (m.epb) { for (let e = 0; e < ne; e++) { const p = get(1); for (let c = 0; c < 4; c++) if (c < 3 || m.ab) ep[e * 4 + c] = (ep[e * 4 + c]! << 1) | p; } }
+  else if (m.spb) { for (let s = 0; s < ns; s++) { const p = get(1); for (let e = s * 2; e <= s * 2 + 1; e++) for (let c = 0; c < 3; c++) ep[e * 4 + c] = (ep[e * 4 + c]! << 1) | p; } }
   // расширение до 8 бит
   const cbits = m.cb + (m.epb || m.spb ? 1 : 0), abits = m.ab ? m.ab + (m.epb ? 1 : 0) : 0;
-  for (const e of ep) {
-    for (let c = 0; c < 3; c++) e[c] = (e[c]! << (8 - cbits)) | (e[c]! >> (2 * cbits - 8));
-    e[3] = abits ? (e[3]! << (8 - abits)) | (e[3]! >> (2 * abits - 8)) : 255;
+  for (let e = 0; e < ne; e++) {
+    for (let c = 0; c < 3; c++) ep[e * 4 + c] = (ep[e * 4 + c]! << (8 - cbits)) | (ep[e * 4 + c]! >> (2 * cbits - 8));
+    ep[e * 4 + 3] = abits ? (ep[e * 4 + 3]! << (8 - abits)) | (ep[e * 4 + 3]! >> (2 * abits - 8)) : 255;
   }
-  const subset = (i: number) => (ns === 1 ? 0 : ns === 2 ? (PART2[part]! >> i) & 1 : (PART3[part]! >> (i * 2)) & 3);
-  const anchor = (i: number) => i === 0 || (ns === 2 && i === ANCHOR2[part]) || (ns === 3 && (i === ANCHOR3A[part] || i === ANCHOR3B[part]));
-  const idx = new Uint8Array(16), idx2 = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) idx[i] = get(anchor(i) ? m.ib - 1 : m.ib);
-  if (m.ib2) for (let i = 0; i < 16; i++) idx2[i] = get(i === 0 ? m.ib2 - 1 : m.ib2);
+  const p2 = PART2[part]!, p3 = PART3[part]!, a2 = ANCHOR2[part], a3a = ANCHOR3A[part], a3b = ANCHOR3B[part];
   for (let i = 0; i < 16; i++) {
-    const s = subset(i), e0 = ep[s * 2]!, e1 = ep[s * 2 + 1]!;
-    let ci = idx[i]!, ai = idx[i]!, cw = weights(m.ib), aw = weights(m.ib);
-    if (m.ib2) { if (isel) { ci = idx2[i]!; cw = weights(m.ib2); } else { ai = idx2[i]!; aw = weights(m.ib2); } }
-    const o = i * 4;
-    for (let c = 0; c < 3; c++) out[o + c] = ((64 - cw[ci]!) * e0[c]! + cw[ci]! * e1[c]! + 32) >> 6;
-    out[o + 3] = ((64 - aw[ai]!) * e0[3]! + aw[ai]! * e1[3]! + 32) >> 6;
+    const anchor = i === 0 || (ns === 2 && i === a2) || (ns === 3 && (i === a3a || i === a3b));
+    IDX[i] = get(anchor ? m.ib - 1 : m.ib);
+  }
+  if (m.ib2) for (let i = 0; i < 16; i++) IDX2[i] = get(i === 0 ? m.ib2 - 1 : m.ib2);
+  const w1 = weights(m.ib), w2 = m.ib2 ? weights(m.ib2) : w1;
+  for (let i = 0; i < 16; i++) {
+    const s = ns === 1 ? 0 : ns === 2 ? (p2 >> i) & 1 : (p3 >> (i * 2)) & 3, e0 = s * 8, e1 = s * 8 + 4;
+    let ci = IDX[i]!, ai = IDX[i]!, cw = w1, aw = w1;
+    if (m.ib2) { if (isel) { ci = IDX2[i]!; cw = w2; } else { ai = IDX2[i]!; aw = w2; } }
+    const o = i * 4, wc = cw[ci]!, wa = aw[ai]!;
+    for (let c = 0; c < 3; c++) out[o + c] = ((64 - wc) * ep[e0 + c]! + wc * ep[e1 + c]! + 32) >> 6;
+    out[o + 3] = ((64 - wa) * ep[e0 + 3]! + wa * ep[e1 + 3]! + 32) >> 6;
     if (rot) { const t = out[o + 3]!; out[o + 3] = out[o + rot - 1]!; out[o + rot - 1] = t; }
   }
 }
@@ -83,7 +91,7 @@ export function decodeBC7(src: Uint8Array, off: number, w: number, h: number): U
       decodeBlock(src, off + (by * bw + bx) * 16, blk);
       for (let i = 0; i < 16; i++) {
         const x = bx * 4 + (i & 3), y = by * 4 + (i >> 2);
-        if (x < w && y < h) out.set(blk.subarray(i * 4, i * 4 + 4), (y * w + x) * 4);
+        if (x < w && y < h) { const o = (y * w + x) * 4, q = i * 4; out[o] = blk[q]!; out[o + 1] = blk[q + 1]!; out[o + 2] = blk[q + 2]!; out[o + 3] = blk[q + 3]!; }
       }
     }
   return out;

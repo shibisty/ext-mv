@@ -27,6 +27,8 @@ export interface ModelViewerOptions {
   onFrame?(state: Readonly<PlaybackState>): void;
   /** Анимация закончилась (без зацикливания). */
   onEnded?(): void;
+  /** Прицел изменён перетаскиванием с Alt (слой-сетка поз). */
+  onAim?(grid: { x: number; y: number; cols: number; rows: number }): void;
   /** Щелчок по холсту в режимах select/rotate: попадание (или null — мимо). */
   onPick?(hit: RayHit | null, e: PointerEvent): void;
   /** Перетаскивание левой кнопкой в режимах rotate/move: true — обработано (камера не двигается). */
@@ -124,6 +126,12 @@ export class ModelViewer {
     if (mode === 'fly') this.camera.setMode('fly', this.renderer.bounds.radius);
   }
 
+  /** Сетка прицела текущей анимации (первый слой с grid) или null. */
+  aimGrid(): { cols: number; rows: number; x: number; y: number } | null {
+    const m = this.state.motion;
+    return m && m.kind === 'node' ? m.layers?.find((l) => l.grid)?.grid ?? null : null;
+  }
+
   /** Выбрать анимацию (null — bind-поза) и начать проигрывание. */
   setMotion(motion: Motion | null): void {
     this.state.motion = motion;
@@ -190,6 +198,14 @@ export class ModelViewer {
       if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) start.moved = true;
       if (!start?.moved) return;
       const left = (e.buttons & 1) !== 0 && !e.shiftKey;
+      // Alt + перетаскивание — прицел (слой-сетка поз): вправо/влево — поворот корпуса, вверх/вниз — наклон
+      const g = left && e.altKey ? this.aimGrid() : null;
+      if (g) {
+        g.x = Math.max(0, Math.min(g.cols - 1, g.x - dx * 0.008));
+        g.y = Math.max(0, Math.min(g.rows - 1, g.y - dy * 0.008));
+        this.opts.onAim?.(g);
+        return;
+      }
       if (left && (this.tool === 'rotate' || this.tool === 'move') && this.opts.onToolDrag?.(dx, dy, e)) return;
       if (e.buttons & 2 || e.shiftKey || e.buttons & 4) this.camera.pan(dx, dy); else this.camera.rotate(dx, dy);
     });

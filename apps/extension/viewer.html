@@ -102,6 +102,10 @@
       <input id="motionFilter" type="search" data-i-ph="anim.filter" placeholder="Поиск анимации" autocomplete="off" hidden>
       <select id="motionSel" size="2" data-i-aria="right.anim" aria-label="Анимации"></select>
       <label id="lblLayer" class="row" hidden><span data-i="anim.layer">Другие части тела</span> <select id="motionLayer"></select></label>
+      <div id="aimRow" class="row" hidden title="Alt + перетаскивание по сцене" data-i-title="anim.aimHint">
+        <label class="rng"><span data-i="anim.aimX">Прицел ↔</span> <input id="rngAimX" type="range" min="-100" max="100" value="0"></label>
+        <label class="rng"><span data-i="anim.aimY">↕</span> <input id="rngAimY" type="range" min="-100" max="100" value="0"></label>
+      </div>
       <div class="row">
         <button id="btnPlay">⏸</button>
         <input id="rngTime" type="range" min="0" max="1000" value="0">
