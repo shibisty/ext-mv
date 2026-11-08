@@ -123,6 +123,30 @@ export function readTpks(u: Uint8Array, out = new Map<number, BbTexture>()): Map
   return out;
 }
 
+/** Сжатая запись TPK (0x33310003): данные могут лежать вне пакета — в файле <хеш>.stp рядом (номера, винилы). */
+export interface TpkEntry { hash: number; off: number; csize: number; usize: number; infoSize: number; pack: string }
+export function tpkEntries(u: Uint8Array): TpkEntry[] {
+  const dv = new DataView(u.buffer, u.byteOffset, u.byteLength), out: TpkEntry[] = [];
+  for (const tpk of bbFind(u, 0, u.length, BB_TPK, 4)) {
+    const head = bbChunks(u, tpk.off, tpk.off + tpk.size).find((c) => c.id === 0xb3310000);
+    if (!head) continue;
+    const hk = bbChunks(u, head.off, head.off + head.size);
+    const info = hk.find((c) => c.id === 0x33310001), pack = info ? cstr(u, info.off + 4, 28) : '';
+    const comp = hk.find((c) => c.id === 0x33310003);
+    if (comp) for (let i = 0; i + 36 <= comp.size; i += 36) {
+      const e = comp.off + i;
+      out.push({ hash: dv.getUint32(e, true), off: dv.getUint32(e + 4, true), csize: dv.getUint32(e + 8, true), usize: dv.getUint32(e + 12, true), infoSize: dv.getUint32(e + 16, true), pack });
+    }
+  }
+  return out;
+}
+/** Текстура из внешнего файла .stp (блоки сжатия с начала файла: данные + TextureInfo в конце). */
+export function stpTexture(e: TpkEntry, stp: Uint8Array): BbTexture {
+  const all = bbBlocks(stp, 0, stp.length, e.usize), ti = texInfo(all, e.usize - e.infoSize);
+  const fourcc = new DataView(all.buffer, all.byteOffset).getUint32(e.usize - e.infoSize + 192, true);
+  return { hash: e.hash, name: ti.name || e.hash.toString(16), width: ti.w, height: ti.h, fourcc, pack: e.pack, data: () => all.subarray(0, e.usize - e.infoSize) };
+}
+
 /** BC4/BC5 (ATI1/ATI2): блок одного канала. */
 function bc4Block(d: Uint8Array, p: number, dst: Uint8Array, ch: number, w: number, h: number, bx: number, by: number): void {
   const a0 = d[p]!, a1 = d[p + 1]!, lut = [a0, a1, 0, 0, 0, 0, 0, 0];

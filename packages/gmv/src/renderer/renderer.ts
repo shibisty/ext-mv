@@ -8,18 +8,18 @@ import { boxVisible, buildCells, growCells, meshBox, visibleRanges, type CellLay
 const VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor; layout(location=2) in vec2 aUV;
-layout(location=3) in vec4 aBone; layout(location=4) in vec4 aWeight; layout(location=5) in vec4 aTan; layout(location=6) in vec2 aUV2; layout(location=7) in float aAlpha;
+layout(location=3) in vec4 aBone; layout(location=4) in vec4 aWeight; layout(location=5) in vec4 aTan; layout(location=6) in vec2 aUV2; layout(location=7) in float aAlpha; layout(location=8) in vec4 aShade;
 uniform mat4 uProj, uMV, uModel; uniform sampler2D uBones; uniform bool uSkinned;
-out vec3 vN, vP, vO; out vec4 vT; out vec2 vUV, vUV2; out float vY, vA;
+out vec3 vN, vP, vO, vS; out vec4 vT; out vec2 vUV, vUV2; out float vY, vA;
 mat4 bm(float f){ int i=int(f+0.5); return mat4(texelFetch(uBones,ivec2(0,i),0),texelFetch(uBones,ivec2(1,i),0),texelFetch(uBones,ivec2(2,i),0),texelFetch(uBones,ivec2(3,i),0)); }
 void main(){
   vec4 p=vec4(aPos,1.0); vec3 n=aNor, t=aTan.xyz;
   if(uSkinned){ mat4 m=bm(aBone.x)*aWeight.x; if(aWeight.y!=0.0)m+=bm(aBone.y)*aWeight.y; if(aWeight.z!=0.0)m+=bm(aBone.z)*aWeight.z; if(aWeight.w!=0.0)m+=bm(aBone.w)*aWeight.w; p=m*p; n=mat3(m)*n; t=mat3(m)*t; }
-  vO=aPos; vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vUV2=aUV2; vA=aAlpha; vY=(uModel*p).y; gl_Position=uProj*q;
+  vO=aPos; vec4 q=uMV*p; vP=q.xyz; vN=mat3(uMV)*n; vT=vec4(mat3(uMV)*t,aTan.w); vUV=aUV; vUV2=aUV2; vA=aAlpha; vS=aShade.rgb*2.0; vY=(uModel*p).y; gl_Position=uProj*q;
 }`;
 const FS = `#version 300 es
 precision highp float;
-in vec3 vN, vP, vO; in vec4 vT; in vec2 vUV, vUV2; in float vY, vA; out vec4 o;
+in vec3 vN, vP, vO, vS; in vec4 vT; in vec2 vUV, vUV2; in float vY, vA; out vec4 o;
 // слои ландшафта: номер слоя на тексель (uTIdx, R8), текстуры слоёв (массив), период повтора, подкраска, средний цвет
 uniform bool uTerr, uTHasN, uTHasM; uniform highp sampler2D uTIdx; uniform highp sampler2DArray uTLay, uTNrm, uTMid; uniform vec2 uTPar[32], uTMPar[32]; uniform vec3 uTMean[32], uTMMean[32]; uniform float uTFade;
 uniform mat4 uMV;
@@ -83,6 +83,7 @@ void main(){
   vec4 c=uHasTex?texture(uTex,vUV):vec4(uBase,1.0);
   if(uAlphaTest&&c.a<0.5) discard;
   if(uTerr) c.rgb=terrainColor(c.rgb);
+  c.rgb*=vS; // запечённый свет по вершинам (без него — 1)
   // нормали моделей бывают развёрнуты как угодно (обход граней у игр разный, сцена может быть отражена):
   // освещаем сторону, обращённую к камере
   vec3 V=normalize(-vP), N=normalize(vN);
@@ -209,6 +210,7 @@ interface GpuMesh {
   bPos: WebGLBuffer; bNor: WebGLBuffer; bUV: WebGLBuffer; bBone: WebGLBuffer | null; bWt: WebGLBuffer | null; bTan: WebGLBuffer; bIdx: WebGLBuffer; bUV2: WebGLBuffer | null;
   /** Прозрачность по вершинам (слои ландшафта), null — 1. */
   bA: WebGLBuffer | null;
+  bS: WebGLBuffer | null;
   vao: WebGLVertexArrayObject; vaoW?: WebGLVertexArrayObject; bLine?: WebGLBuffer; lineCount?: number;
   /** Рамка меша для отсечения (null — меш двигается: скелет, вершинная анимация — рисуется всегда). */
   box: Float32Array | null;
@@ -301,6 +303,9 @@ export class Renderer {
       if (b) { gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, n, gl.FLOAT, false, 0, 0); }
       else { gl.disableVertexAttribArray(i); if (i === 4 || i === 7) gl.vertexAttrib4f(i, 1, 0, 0, 0); else gl.vertexAttrib4f(i, 0, 0, 0, 0); }
     });
+    // запечённый свет: байты RGBA (нормированные), 128 — единица; нет буфера — постоянные 0.5
+    if (m.bS) { gl.bindBuffer(gl.ARRAY_BUFFER, m.bS); gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 4, gl.UNSIGNED_BYTE, true, 0, 0); }
+    else { gl.disableVertexAttribArray(8); gl.vertexAttrib4f(8, 0.5, 0.5, 0.5, 0.5); }
   }
 
   /** Освободить GPU-ресурсы текущей модели. */
@@ -314,7 +319,7 @@ export class Renderer {
       if (m.surf) gl.deleteTexture(m.surf);
       if (m.tIdx) gl.deleteTexture(m.tIdx);
       if (m.vaoS) gl.deleteVertexArray(m.vaoS);
-      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine, m.bUV2, m.bA, m.bIdxS]) if (b) gl.deleteBuffer(b);
+      for (const b of [m.bPos, m.bNor, m.bUV, m.bBone, m.bWt, m.bTan, m.bIdx, m.bLine, m.bUV2, m.bA, m.bS, m.bIdxS]) if (b) gl.deleteBuffer(b);
     }
     this.meshes = [];
     this.highlight = [];
@@ -344,10 +349,10 @@ export class Renderer {
       const bPos = this.buf(gl.ARRAY_BUFFER, d.pos), bNor = this.buf(gl.ARRAY_BUFFER, d.nor), bUV = this.buf(gl.ARRAY_BUFFER, d.uv);
       const skin = !!model.skeleton;
       const bBone = skin ? this.buf(gl.ARRAY_BUFFER, d.bone) : null, bWt = skin ? this.buf(gl.ARRAY_BUFFER, d.weight) : null, bTan = this.buf(gl.ARRAY_BUFFER, computeTangents(d));
-      const bUV2 = d.uv2 ? this.buf(gl.ARRAY_BUFFER, d.uv2) : null, bA = d.vertexAlpha ? this.buf(gl.ARRAY_BUFFER, d.vertexAlpha) : null;
+      const bUV2 = d.uv2 ? this.buf(gl.ARRAY_BUFFER, d.uv2) : null, bA = d.vertexAlpha ? this.buf(gl.ARRAY_BUFFER, d.vertexAlpha) : null, bS = d.vertexShade ? this.buf(gl.ARRAY_BUFFER, d.vertexShade) : null;
       const vao = gl.createVertexArray()!;
       const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, tIdx: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
-        bPos, bNor, bUV, bBone, bWt, bTan, bUV2, bA, vao, bIdx: null as unknown as WebGLBuffer, box: still && !d.dynamic ? meshBox(d.pos, d.indices) : null };
+        bPos, bNor, bUV, bBone, bWt, bTan, bUV2, bA, bS, vao, bIdx: null as unknown as WebGLBuffer, box: still && !d.dynamic ? meshBox(d.pos, d.indices) : null };
       gl.bindVertexArray(vao);
       this.attribs(m);
       m.bIdx = this.buf(gl.ELEMENT_ARRAY_BUFFER, m.idx);

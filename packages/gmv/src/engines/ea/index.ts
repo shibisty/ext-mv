@@ -3,6 +3,9 @@ import { hasMagic, u32le } from '../../core/binary';
 import { defineEngine } from '../../core/plugin';
 import { FCE_MAGIC } from './magic';
 
+/** Город (L5RA.BUN) и номерные секции потоковой загрузки (STREAML5RA_5407.BUN); файлы с хешем в имени — библиотеки. */
+const TRACK_RE = /(^|\/)tracks\/(stream[a-z]\d[a-z]{2}_\d+|[a-z]\d[a-z]{2})\.bun$/i, TRACK_NAME_RE = /^(stream[a-z]\d[a-z]{2}_\d+|[a-z]\d[a-z]{2})\.bun$/i;
+
 export const eaEngine = defineEngine({
   id: 'ea',
   title: 'Electronic Arts (NFS3/HS, NFS World)',
@@ -19,6 +22,12 @@ export const eaEngine = defineEngine({
       sniff: (h) => (u32le(h, 0) === 0x80134000 ? 1 : 0),
       load: async (main, ctx) => (await import('./nfsgeom')).loadNfsCar(main, ctx),
     },
+    {
+      id: 'nfsw-track', title: 'NFS World: трасса (TRACKS/L5RA.BUN — город целиком, STREAML5RA_<N>.BUN — секция)', engine: 'ea', extensions: ['bun'], status: 'beta',
+      pathPattern: TRACK_RE,
+      sniff: (_h, name) => (TRACK_NAME_RE.test(name) ? 1 : 0),
+      load: async (main, ctx) => (await import('./nfstrack')).loadNfsTrack(main, ctx),
+    },
   ],
   archives: [
     {
@@ -31,8 +40,8 @@ export const eaEngine = defineEngine({
     { id: 'nfs34', group: 'Игры', title: 'Need for Speed III: Hot Pursuit / NFS: High Stakes — автомобили (FCE)', engine: 'ea', formats: ['ea-fce'], status: 'beta',
       ui: { archives: true, archiveExts: ['viv', 'big'], archiveLabel: 'Открыть car.viv…' },
       hint: 'Откройте car.viv (контейнер BIGF) — внутри car.fce и car00.tga. Показывается LOD0. NFS World — отдельный пункт; NFS Underground/MW/Carbon, FIFA и Frostbite пока не читаются.' },
-    { id: 'nfsworld', group: 'Игры', title: 'Need for Speed: World (Black Box) — машины', engine: 'ea', formats: ['nfsw-car'], extensions: [], status: 'beta', markers: ['nfsw.exe', 'CARS'],
+    { id: 'nfsworld', group: 'Игры', title: 'Need for Speed: World (Black Box) — машины и город', engine: 'ea', formats: ['nfsw-car', 'nfsw-track'], extensions: [], status: 'beta', markers: ['nfsw.exe', 'CARS'],
       ui: { zUp: true },
-      hint: 'Откройте «Папку игры» (папку с nfsw.exe) и выберите CARS/<машина>/GEOMETRY.bin — текстуры возьмутся из TEXTURES.BIN рядом и общего CARS/TEXTURES.BIN. Показан LOD A: кузов и стоковый обвес, остальные детали тюнинга — в списке мешей. Окраска кузова и номер создаются игрой на лету — они показаны цветом. Трассы пока не читаются.' },
+      hint: 'Откройте «Папку игры» (папку с nfsw.exe). Машины: CARS/<машина>/GEOMETRY.bin — текстуры из TEXTURES.BIN рядом, CARS/TEXTURES.BIN и GLOBAL; показан LOD A: кузов и стоковый обвес, колёса и тормозные диски расставлены по аркам кузова, остальные детали тюнинга — в списке мешей. Панель «Вид модели»: цвет окраски, винил (CARS/VINYLS, на бока или капот) и колёса с дисками из библиотек CARS/WHEELS*; номер — фон «мирового» номера; LOD B–E — в списке мешей. Город: TRACKS/L5RA.BUN — весь город (около минуты, бюджет 7 млн треугольников), TRACKS/STREAML5RA_<N>.BUN — одна секция; общие объекты и текстуры берутся из файлов STREAML5RA_0x*.BUN.' },
   ],
 });

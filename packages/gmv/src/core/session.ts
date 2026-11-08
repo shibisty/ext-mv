@@ -13,7 +13,8 @@ import { MotionOnlyError, type Archive, type ArchiveEntry, type BlobFile, type D
 export interface SessionEvents {
   status: { text: string; error: boolean };
   preset: GamePreset;
-  model: { model: Model; main: VFile; format: FormatPlugin };
+  /** keepView — та же модель с другими Model.options: камеру не сбрасывать. */
+  model: { model: Model; main: VFile; format: FormatPlugin; keepView?: boolean };
   motions: Motion[];
   archives: Archive[];
   /** Набор доступных текстур изменился — стоит заново применить текстуры. */
@@ -247,7 +248,17 @@ export class ViewerSession {
 
   // ---------- модель ----------
   /** Выбрать основной файл (автоопределение) и загрузить модель. */
-  async loadModel(files: ReadonlyArray<VFile | BlobFile>): Promise<Model | null> {
+  /** Файлы и выборы последней загрузки — для setModelOption. */
+  private lastLoad: { files: ReadonlyArray<VFile | BlobFile>; options: Record<string, string> } | null = null;
+
+  /** Сменить выбор модели (Model.options) и пересобрать её из тех же файлов. */
+  async setModelOption(id: string, value: string): Promise<Model | null> {
+    if (!this.lastLoad || !this.main) return null;
+    const options = { ...this.lastLoad.options, [id]: value };
+    return this.loadModel([this.main, ...this.lastLoad.files.filter((f) => f !== this.main)], options, true);
+  }
+
+  async loadModel(files: ReadonlyArray<VFile | BlobFile>, options: Record<string, string> = {}, keepView = false): Promise<Model | null> {
     let main: VFile | null = null, format: FormatPlugin | null = null, fallback: { file: VFile; format: FormatPlugin } | null = null;
     for (const f of files) {
       const d = await this.registry.detect(f, this.preset.formats);
@@ -265,14 +276,15 @@ export class ViewerSession {
     this.progress(tr('session.loadingName', { name: main.name }));
     await this.yieldUI();
     try {
-      const model = await format.load(main, this.loadContext(files, main));
+      const model = await format.load(main, this.loadContext(files, main, options));
+      this.lastLoad = { files, options };
       model.normalY ??= this.registry.engine(format.engine)?.normalY ?? 'dx';
       this.model = model; this.format = format; this.main = main; this.lastFailure = null;
       this.overrides.clear();
       this.mapsCache.clear();
       this.motions.length = 0;
       this.motions.push(...model.motions.map((m) => ({ ...m, source: m.source ?? 'model' })));
-      this.emit('model', { model, main, format });
+      this.emit('model', { model, main, format, keepView });
       if (format.afterLoad) await format.afterLoad(this.afterLoadContext(main, model));
       this.emit('motions', this.motions);
       this.status(tr('session.loaded', { name: main.name }));
@@ -286,11 +298,12 @@ export class ViewerSession {
     } finally { this.progress(); }
   }
 
-  private loadContext(files: ReadonlyArray<VFile | BlobFile>, main: VFile): LoadContext {
+  private loadContext(files: ReadonlyArray<VFile | BlobFile>, main: VFile, options: Record<string, string> = {}): LoadContext {
     const archives = this.archives;
     return {
       files,
       archives,
+      options,
       async sibling(name) {
         const lower = name.toLowerCase();
         const f = files.find((x) => x.name.toLowerCase() === lower);

@@ -1,7 +1,7 @@
 // Страница просмотрщика: стартовое окно выбора игры, верхняя панель инструментов, ресурсы слева, сцена/меши/анимации справа.
 import {
   autoLayers, XRAY_FX_PART, buildDiagnostics, createRegistry, engineTitle, presetText, tr, translatePlacement, instanceAt, rotatePlacement, sceneTree, ViewerSession,
-  type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Motion, type NodeLayer, type NodeMotion, type RayHit, type SceneNode,
+  type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Model, type Motion, type NodeLayer, type NodeMotion, type RayHit, type SceneNode,
 } from 'gmv';
 import { allEngines } from 'gmv/engines';
 import { configureAssimp } from 'gmv/engines/assimp';
@@ -128,9 +128,13 @@ async function applyTextures(): Promise<void> {
   }));
 }
 
-session.on('model', ({ model, main }) => {
+session.on('model', ({ model, main, keepView }) => {
   enterViewer();
+  // та же модель с другими настройками вида (Model.options): камера остаётся на месте
+  const cam = keepView ? { yaw: viewer.camera.yaw, pitch: viewer.camera.pitch, dist: viewer.camera.dist, target: [...viewer.camera.target] } : null;
   viewer.setModel(model);
+  if (cam) Object.assign(viewer.camera, cam);
+  rebuildOptions(model);
   input('rngClip').value = '1000';
   applyClip();
   input('rngDist').value = '1000';
@@ -164,6 +168,27 @@ function showProgress(p: { text: string; done?: number; total?: number } | null)
   if (known) el.setAttribute('aria-valuenow', String(pc)); else el.removeAttribute('aria-valuenow');
 }
 session.on('progress', showProgress);
+
+/** Настройки вида модели (диски, винил, окраска NFS World…): выпадающие списки, смена — пересборка модели. */
+function rebuildOptions(model: Model): void {
+  const box = $('modelOptions'), list = model.options ?? [];
+  $('paneOptions').hidden = !list.length;
+  box.textContent = '';
+  for (const o of list) {
+    const row = document.createElement('label');
+    row.className = 'row';
+    const span = document.createElement('span');
+    span.textContent = o.label;
+    const sel = document.createElement('select');
+    sel.style.flex = '1';
+    sel.style.minWidth = '0';
+    for (const v of o.values) { const op = document.createElement('option'); op.value = v.id; op.textContent = v.label; sel.append(op); }
+    sel.value = o.value;
+    sel.onchange = () => { sel.disabled = true; void session.setModelOption(o.id, sel.value); };
+    row.append(span, sel);
+    box.append(row);
+  }
+}
 
 function rebuildMeshList(): void {
   const box = $('meshList'), model = session.model;

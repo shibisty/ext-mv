@@ -119,6 +119,8 @@ export interface Mesh {
   uv2?: Float32Array;
   /** Прозрачность по вершинам (0..1): слой ландшафта поверх основы — рисуется после непрозрачных мешей, с наложением. */
   vertexAlpha?: Float32Array;
+  /** Запечённое освещение по вершинам: RGB(A) байтами, 128 — без изменений (умножение ×2, как у Black Box). */
+  vertexShade?: Uint8Array;
   /**
    * Карта слоёв ландшафта (номер слоя Model.terrainLayers на тексель, по UV меша 0..1): вблизи вместо одной цветовой
    * карты (image) рисуются повторяющиеся текстуры слоёв, подкрашенные ею.
@@ -270,6 +272,9 @@ export interface InstancePlacement {
   ranges?: PlacementRange[];
 }
 
+/** Выбор для пересборки модели: id, подпись, варианты и текущее значение. */
+export interface ModelOption { id: string; label: string; values: Array<{ id: string; label: string }>; value: string }
+
 export interface Model {
   meshes: Mesh[];
   /** Экземпляры моделей внутри сцены (Metro level.bin). */
@@ -295,6 +300,11 @@ export interface Model {
   loadMotions?(file: VFile): Promise<Motion[]>;
   /** Произвольные данные для резолверов текстур (имя .mtl и т. п.). */
   meta?: Record<string, unknown>;
+  /**
+   * Настройки вида, которые формат умеет пересобрать (диски, винил, цвет окраски NFS World): список выборов с текущим
+   * значением. Смена значения — повторная загрузка с LoadContext.options (камера сохраняется).
+   */
+  options?: ModelOption[];
   /** Направление зелёного канала карт нормалей игры: 'dx' (Y вниз, Direct3D — по умолчанию) или 'gl' (Y вверх). */
   normalY?: 'gl' | 'dx';
 }

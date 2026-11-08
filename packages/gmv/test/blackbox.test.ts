@@ -43,17 +43,18 @@ describe('Need for Speed: World — машина', () => {
   });
   it('TPK: сжатая запись (HUFF) с TextureInfo в конце → DXT1', () => {
     const px = new Uint8Array([0x00, 0xf8, 0x00, 0xf8, 0, 0, 0, 0]); // 4×4 DXT1, весь блок красный
-    const t = readTpks(nfsTpk(tex, 'CAR_SKIN1', 4, 4, 'DXT1', px, true)).get(tex)!;
-    expect([t.name, t.width, t.height, t.pack]).toEqual(['CAR_SKIN1', 4, 4, 'CARTEMPLATETEXTURES_TEST']);
+    const t = readTpks(nfsTpk(tex, 'CAR_TRIM1', 4, 4, 'DXT1', px, true)).get(tex)!;
+    expect([t.name, t.width, t.height, t.pack]).toEqual(['CAR_TRIM1', 4, 4, 'CARTEMPLATETEXTURES_TEST']);
     const img = decodeBbTexture(t);
     expect(Array.from(img.rgba!.subarray(0, 4))).toEqual([255, 0, 0, 255]);
   });
-  it('загрузка: LOD A, текстура из TEXTURES.BIN рядом, окраска кузова — цветом, обвесы скрыты', async () => {
-    const px = new Uint8Array([0x00, 0xf8, 0x00, 0xf8, 0, 0, 0, 0]), tpk = nfsTpk(tex, 'CAR_SKIN1', 4, 4, 'DXT1', px);
+  it('загрузка: LOD A (B–E скрыты), текстура из TEXTURES.BIN рядом, окраска кузова — цветом, обвесы скрыты', async () => {
+    const px = new Uint8Array([0x00, 0xf8, 0x00, 0xf8, 0, 0, 0, 0]), tpk = nfsTpk(tex, 'CAR_TRIM1', 4, 4, 'DXT1', px);
     const main = { name: 'GEOMETRY.bin', path: 'cars/car/geometry.bin', arrayBuffer: async () => geo.slice().buffer };
     const ctx = { files: [], archives: [], sibling: async (n: string) => (n.toUpperCase() === 'TEXTURES.BIN' ? tpk.slice().buffer : null), readPath: async () => null };
     const m = await loadNfsCar(main, ctx);
-    expect(m.meshes.map((x) => x.name)).toEqual(['CAR_BASE_A · CAR_SKIN1', 'CAR_KIT01_SKIRT_A · окраска кузова (создаётся игрой)']);
+    expect(m.meshes.map((x) => x.name)).toEqual(['CAR_BASE_A · CAR_TRIM1', 'CAR_KIT01_SKIRT_A · окраска кузова (создаётся игрой)', 'CAR_BASE_B · CAR_TRIM1']);
+    expect(m.meshes[2]!.defaultHidden).toBe(true); // LOD B — в списке, скрыт
     expect(m.meshes[0]!.image?.width).toBe(4);
     expect(m.meshes[0]!.defaultHidden).toBeUndefined();
     expect(m.meshes[1]!.color).toBeDefined();

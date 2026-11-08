@@ -14,6 +14,8 @@ export interface LoadContext {
   sibling(name: string): Promise<ArrayBuffer | null>;
   /** Прочитать файл архива по полному пути (первый найденный). */
   readPath(path: string): Promise<Uint8Array | null>;
+  /** Значения Model.options, выбранные пользователем (повторная загрузка с другими дисками, винилом…). */
+  readonly options?: Readonly<Record<string, string>>;
 }
 
 export interface AfterLoadContext {
