@@ -1,6 +1,6 @@
 // WebGL2-рендерер модели gmv: скининг в вершинном шейдере (матрицы костей в float-текстуре), сетка, каркас, скелет.
 import { computeTangents, type NormalPacking } from '../core/normals';
-import type { Bounds, DecodedImage, Mesh, Model, SkeletonRuntime } from '../core/types';
+import type { Bounds, DecodedImage, Lightmap, Mesh, Model, ScreenFx, SkeletonRuntime } from '../core/types';
 import type { OrbitCamera } from './camera';
 import { FLIPZ, IDENT, invert, mulCol, perspective, ZUP } from './mat4';
 import { boxVisible, buildCells, growCells, meshBox, visibleRanges, type CellLayout } from './cull';
@@ -49,7 +49,24 @@ vec3 terrainColor(vec3 sat){
   return mix(clamp(acc*mix(1.0,ao,0.5),0.0,1.0),sat,fd);
 }
 // карта освещения уровня (яркость в R) по второму набору UV
-uniform sampler2D uLm; uniform bool uHasLm; uniform float uLmK;
+uniform sampler2D uLm; uniform bool uHasLm; uniform bool uLmRgb; uniform float uLmK;
+// рельеф (Source bump lightmaps): три карты по направлениям базиса, смешиваются по нормали из карты нормалей (касательное пространство)
+uniform highp sampler2DArray uLmB; uniform bool uHasLmB;
+bool gBump=false; vec3 gBumpN=vec3(0.0,0.0,1.0);
+vec3 lmap(){
+  vec3 l;
+  if(gBump){
+    vec3 w=max(vec3(dot(gBumpN,vec3(0.81649658,0.0,0.57735027)),dot(gBumpN,vec3(-0.40824829,0.70710678,0.57735027)),dot(gBumpN,vec3(-0.40824829,-0.70710678,0.57735027))),0.0);
+    w*=w;
+    l=(w.x*texture(uLmB,vec3(vUV2,0.0)).rgb+w.y*texture(uLmB,vec3(vUV2,1.0)).rgb+w.z*texture(uLmB,vec3(vUV2,2.0)).rgb)/max(w.x+w.y+w.z,1e-4);
+  } else l=texture(uLm,vUV2).rgb;
+  return (uLmRgb ? l : vec3(l.r))*uLmK;
+}
+// плоскость отсечения (отражение воды): в координатах модели, рисуется то, что с её положительной стороны
+uniform bool uClipOn; uniform vec4 uClipPl;
+// вода и стекло: отражение (uRefl), снимок сцены и его глубина (uRefr, uDepth); uFxK — искажение преломления/отражения, туман: начало/конец
+uniform int uFx; uniform sampler2D uRefl, uRefr, uDepth; uniform vec2 uScreen, uNF, uFxScroll; uniform vec3 uFxRT, uFxLT, uFogC; uniform vec4 uFxK; uniform bool uFxRefl, uFxFog; uniform float uTime;
+float linDepth(float z){ float n=uNF.x, f=uNF.y; return 2.0*n*f/(f+n-(z*2.0-1.0)*(f-n)); }
 // срез сверху: всё выше uClipY (мировая высота показа) не рисуется — чтобы заглянуть внутрь уровня
 uniform float uClipY;
 uniform sampler2D uTex, uNorm, uSurf; uniform bool uHasTex, uAlphaTest, uFlat, uHasNorm, uHasSurf; uniform vec3 uFlatColor, uBase; uniform float uFlatAlpha;
@@ -77,9 +94,33 @@ vec3 envBRDF(vec3 F0, float rough, float NdV){
   vec2 AB=vec2(-1.04,1.04)*a004+r.zw;
   return F0*AB.x+AB.y;
 }
+vec4 screenFx(){
+  vec2 suv=gl_FragCoord.xy/uScreen, d=vec2(0.0);
+  vec3 N=normalize(vN), V=normalize(-vP);
+  if(dot(N,V)<0.0) N=-N;
+  if(uHasNorm){
+    // две копии карты нормалей с разной прокруткой — рябь не повторяется явно
+    vec2 sc=uFxScroll*uTime;
+    vec3 a=tangentNormal(texture(uNorm,vUV+sc)), b=tangentNormal(texture(uNorm,vUV*0.73+vec2(0.31,0.17)-sc*0.6));
+    d=(a.xy+b.xy)*0.5;
+  } else d=vec2(sin(vO.x*0.05+uTime*1.3)+sin(vO.y*0.07-uTime),cos(vO.y*0.05+uTime)+cos(vO.x*0.06-uTime*0.8))*0.12;
+  float wz=-vP.z;
+  vec2 ru=clamp(suv+d*uFxK.x,vec2(0.001),vec2(0.999));
+  float sz=linDepth(texture(uDepth,ru).r);
+  if(sz<wz){ ru=suv; sz=linDepth(texture(uDepth,ru).r); } // искажение захватило то, что перед поверхностью
+  vec3 refr=texture(uRefr,ru).rgb*uFxRT;
+  // стекло: преломление и блик окружения ($envmap × $envmaptint) по Френелю
+  if(uFx==2) return vec4(refr+envColor(reflect(-V,normalize(N+vec3(d*0.5,0.0))),0.2)*uFxLT*mix(0.15,1.0,pow(1.0-max(dot(N,V),0.0),3.0)),1.0);
+  if(uFxFog){ float th=max(0.0,sz-wz)*length(vP)/max(wz,1e-3); refr=mix(refr,uFogC,clamp((th-uFxK.z)/max(uFxK.w-uFxK.z,1.0),0.0,1.0)); }
+  vec3 refl=uFxRefl ? texture(uRefl,clamp(suv+d*uFxK.y,vec2(0.001),vec2(0.999))).rgb : envColor(reflect(-V,N),0.3);
+  float fr=mix(0.25,1.0,pow(1.0-max(dot(N,V),0.0),3.0));
+  return vec4(mix(refr,refl*uFxLT,fr),1.0);
+}
 void main(){
   if(vY>uClipY) discard;
+  if(uClipOn&&dot(vec4(vO,1.0),uClipPl)<-0.25) discard;
   if(uFlat){ o=vec4(uFlatColor,uFlatAlpha); return; }
+  if(uFx>0){ o=screenFx(); return; }
   vec4 c=uHasTex?texture(uTex,vUV):vec4(uBase,1.0);
   if(uAlphaTest&&c.a<0.5) discard;
   if(uTerr) c.rgb=terrainColor(c.rgb);
@@ -104,6 +145,8 @@ void main(){
       nt=tangentNormal(texture(uNorm,vUV));
       nt=normalize(vec3(nt.xy*uNI,max(nt.z,0.001)));
       Nw=normalize(mat3(T,B,N)*nt)*side;
+      // базис рельефа Source — в осях текстуры как они записаны в карте (без пересчёта Y под соглашение показа)
+      gBump=uHasLmB; gBumpN=vec3(nt.x,nt.y*uNormY,nt.z);
     }
   }
   if(uView==1){ o=vec4(Nw*0.5+0.5,1.0); return; } // нормали (пространство камеры)
@@ -128,7 +171,7 @@ void main(){
     vec3 amb=mix(vec3(0.05,0.05,0.06),vec3(0.20,0.22,0.26),Nw.y*0.5+0.5);
     vec3 R=reflect(-V,Nw);
     vec3 ambient=(alb*(1.0-metal)*amb+envColor(R,rough)*envBRDF(F0,rough,NdV))*ao;
-    if(uHasLm){ float lm=texture(uLm,vUV2).r*uLmK; direct*=lm*0.5; ambient=ambient*0.25+alb*(1.0-metal)*lm*ao; }
+    if(uHasLm){ vec3 lm=lmap(); direct*=lm*0.5; ambient=ambient*0.25+alb*(1.0-metal)*lm*ao; }
     o=vec4(pow(direct+ambient,vec3(1.0/2.2)),vA);
     return;
   }
@@ -137,9 +180,14 @@ void main(){
   float sp=uHasNorm?pow(max(dot(Nw,H),0.0),32.0)*0.25*geo*step(0.0,ndl):0.0;
   vec3 amb=mix(vec3(0.05,0.05,0.06),vec3(0.20,0.22,0.26),Nw.y*0.5+0.5);
   vec3 col=alb*(amb+vec3(1.0,0.97,0.92)*ndl*geo*1.2)+vec3(sp);
-  if(uHasLm){ float lm=texture(uLm,vUV2).r*uLmK; col=alb*(lm*(0.75+0.25*ndl*geo)+amb*0.15)+vec3(sp)*lm; }
+  if(uHasLm){ vec3 lm=lmap(); col=alb*(lm*(0.75+0.25*ndl*geo)+amb*0.15)+vec3(sp)*lm; }
   o=vec4(pow(col,vec3(1.0/2.2)),vA);
 }`;
+// вывод готового кадра (из промежуточного буфера) на холст
+const QVS = `#version 300 es
+void main(){ vec2 p=vec2(gl_VertexID==1?3.0:-1.0, gl_VertexID==2?3.0:-1.0); gl_Position=vec4(p,0.0,1.0); }`;
+const QFS = `#version 300 es
+precision mediump float; uniform sampler2D uT; out vec4 o; void main(){ o=texelFetch(uT,ivec2(gl_FragCoord.xy),0); }`;
 const LVS = `#version 300 es
 layout(location=0) in vec3 aPos; uniform mat4 uProj, uMV; void main(){ gl_Position=uProj*uMV*vec4(aPos,1.0); }`;
 const LFS = `#version 300 es
@@ -183,6 +231,18 @@ export interface DrawOptions {
   terrainLayers?: boolean;
   /** Дальность прорисовки в единицах модели (части уровня дальше не рисуются); по умолчанию — без ограничения. */
   drawDistance?: number;
+  /** Отражение и преломление на воде и стекле (Mesh.screenFx). По умолчанию включено; выкл. — полупрозрачный цвет. */
+  screenFx?: boolean;
+  /** Освещение рельефа по картам базиса (Source bump lightmaps), если они есть. По умолчанию включено. */
+  bumpLightmap?: boolean;
+}
+
+/** Промежуточные буферы кадра для воды и стекла: сцена (MSAA), её снимок с глубиной, отражение. */
+interface FxTargets {
+  w: number; h: number;
+  fbA: WebGLFramebuffer; rbColor: WebGLRenderbuffer; rbDepth: WebGLRenderbuffer;
+  fbB: WebGLFramebuffer; texColor: WebGLTexture; texDepth: WebGLTexture;
+  fbR: WebGLFramebuffer; texRefl: WebGLTexture; rbReflDepth: WebGLRenderbuffer; rw: number; rh: number;
 }
 
 /** Цвета сцены (для тем оформления). */
@@ -216,6 +276,8 @@ interface GpuMesh {
   box: Float32Array | null;
   /** Большой меш: треугольники по клеткам, свой буфер индексов в порядке клеток. */
   cells?: CellLayout; vaoS?: WebGLVertexArrayObject; bIdxS?: WebGLBuffer; sortDirty?: boolean;
+  /** Вода/стекло: рисуется после сцены по её снимку. */
+  fx: ScreenFx | null;
 }
 interface LineVao { vao: WebGLVertexArrayObject; buf: WebGLBuffer }
 
@@ -226,6 +288,13 @@ export class Renderer {
   bounds = { center: [0, 0, 0], radius: 1 };
   private readonly p: WebGLProgram;
   private readonly lp: WebGLProgram;
+  private readonly qp: WebGLProgram;
+  private readonly qVao: WebGLVertexArrayObject;
+  private fxT: FxTargets | null = null;
+  private fxFailed = false;
+  private lmBTex: WebGLTexture | null = null;
+  /** Что нарисовано водой и стеклом в последнем кадре: мешей, было ли плоское отражение. */
+  fxStats = { meshes: 0, reflection: false };
   private readonly U: Record<string, WebGLUniformLocation | null>;
   private readonly LU: Record<string, WebGLUniformLocation | null>;
   private readonly boneTex: WebGLTexture;
@@ -252,6 +321,7 @@ export class Renderer {
   private layMean = new Float32Array(96);
   private layFade = 150;
   private lmScale = 1;
+  private lmRgb = false;
   /** Что нарисовано в последнем кадре (после отсечения): треугольники, вызовы, клеток всего. */
   drawStats = { tris: 0, calls: 0, cells: 0 };
   /** Матрицы последнего кадра: проекция × вид × модель (для выбора лучом). */
@@ -270,10 +340,15 @@ export class Renderer {
     this.gl = gl;
     this.p = program(gl, VS, FS);
     this.lp = program(gl, LVS, LFS);
+    this.qp = program(gl, QVS, QFS);
+    this.qVao = gl.createVertexArray()!;
     const u = (p: WebGLProgram, n: string) => gl.getUniformLocation(p, n);
     this.U = { proj: u(this.p, 'uProj'), mv: u(this.p, 'uMV'), model: u(this.p, 'uModel'), clipY: u(this.p, 'uClipY'), bones: u(this.p, 'uBones'), skinned: u(this.p, 'uSkinned'), tex: u(this.p, 'uTex'),
-      hasTex: u(this.p, 'uHasTex'), alpha: u(this.p, 'uAlphaTest'), flat: u(this.p, 'uFlat'), flatColor: u(this.p, 'uFlatColor'), flatAlpha: u(this.p, 'uFlatAlpha'), lm: u(this.p, 'uLm'), hasLm: u(this.p, 'uHasLm'), lmK: u(this.p, 'uLmK'), base: u(this.p, 'uBase'),
+      hasTex: u(this.p, 'uHasTex'), alpha: u(this.p, 'uAlphaTest'), flat: u(this.p, 'uFlat'), flatColor: u(this.p, 'uFlatColor'), flatAlpha: u(this.p, 'uFlatAlpha'), lm: u(this.p, 'uLm'), hasLm: u(this.p, 'uHasLm'), lmRgb: u(this.p, 'uLmRgb'), lmK: u(this.p, 'uLmK'), base: u(this.p, 'uBase'),
       terr: u(this.p, 'uTerr'), tIdx: u(this.p, 'uTIdx'), tLay: u(this.p, 'uTLay'), tNrm: u(this.p, 'uTNrm'), tMid: u(this.p, 'uTMid'), tHasN: u(this.p, 'uTHasN'), tHasM: u(this.p, 'uTHasM'), tMPar: u(this.p, 'uTMPar'), tMMean: u(this.p, 'uTMMean'), tPar: u(this.p, 'uTPar'), tMean: u(this.p, 'uTMean'), tFade: u(this.p, 'uTFade'),
+      lmB: u(this.p, 'uLmB'), hasLmB: u(this.p, 'uHasLmB'), clipOn: u(this.p, 'uClipOn'), clipPl: u(this.p, 'uClipPl'),
+      fx: u(this.p, 'uFx'), refl: u(this.p, 'uRefl'), refr: u(this.p, 'uRefr'), depth: u(this.p, 'uDepth'), screen: u(this.p, 'uScreen'), nf: u(this.p, 'uNF'), fxScroll: u(this.p, 'uFxScroll'),
+      fxRT: u(this.p, 'uFxRT'), fxLT: u(this.p, 'uFxLT'), fogC: u(this.p, 'uFogC'), fxK: u(this.p, 'uFxK'), fxRefl: u(this.p, 'uFxRefl'), fxFog: u(this.p, 'uFxFog'), time: u(this.p, 'uTime'),
       norm: u(this.p, 'uNorm'), hasNorm: u(this.p, 'uHasNorm'), normPack: u(this.p, 'uNormPack'), normY: u(this.p, 'uNormY'), mirror: u(this.p, 'uMirror'), view: u(this.p, 'uView'), ni: u(this.p, 'uNI'), surf: u(this.p, 'uSurf'), hasSurf: u(this.p, 'uHasSurf') };
     this.LU = { proj: u(this.lp, 'uProj'), mv: u(this.lp, 'uMV'), color: u(this.lp, 'uColor') };
     this.boneTex = gl.createTexture()!;
@@ -336,6 +411,10 @@ export class Renderer {
     for (const v of [this.gridVao, this.skelVao]) { gl.deleteVertexArray(v.vao); gl.deleteBuffer(v.buf); }
     gl.deleteProgram(this.p);
     gl.deleteProgram(this.lp);
+    gl.deleteProgram(this.qp);
+    gl.deleteVertexArray(this.qVao);
+    this.freeTargets();
+    if (this.lmBTex) gl.deleteTexture(this.lmBTex);
   }
 
   setModel(model: Model): void {
@@ -351,7 +430,7 @@ export class Renderer {
       const bBone = skin ? this.buf(gl.ARRAY_BUFFER, d.bone) : null, bWt = skin ? this.buf(gl.ARRAY_BUFFER, d.weight) : null, bTan = this.buf(gl.ARRAY_BUFFER, computeTangents(d));
       const bUV2 = d.uv2 ? this.buf(gl.ARRAY_BUFFER, d.uv2) : null, bA = d.vertexAlpha ? this.buf(gl.ARRAY_BUFFER, d.vertexAlpha) : null, bS = d.vertexShade ? this.buf(gl.ARRAY_BUFFER, d.vertexShade) : null;
       const vao = gl.createVertexArray()!;
-      const m: GpuMesh = { count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, tIdx: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
+      const m: GpuMesh = { fx: d.screenFx ?? null, count: d.indices.length, data: d, idx: d.indices.slice(), visible: !d.defaultHidden, tex: null, norm: null, normPack: 'rgb', surf: null, tIdx: null, itype: d.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
         bPos, bNor, bUV, bBone, bWt, bTan, bUV2, bA, bS, vao, bIdx: null as unknown as WebGLBuffer, box: still && !d.dynamic ? meshBox(d.pos, d.indices) : null };
       gl.bindVertexArray(vao);
       this.attribs(m);
@@ -392,15 +471,33 @@ export class Renderer {
   }
 
   /** Карта освещения уровня: яркость 1 байт на пиксель (R8) с mip-уровнями. */
-  setLightmap(lm: { width: number; height: number; data: Uint8Array; scale?: number } | null): void {
+  setLightmap(lm: Lightmap | null): void {
     const gl = this.gl;
     if (this.lmTex) { gl.deleteTexture(this.lmTex); this.lmTex = null; }
+    if (this.lmBTex) { gl.deleteTexture(this.lmBTex); this.lmBTex = null; }
     if (!lm) return;
+    if (lm.bump && lm.rgb) {
+      // три карты базиса рельефа — слои массива текстур
+      const t = gl.createTexture()!;
+      gl.activeTexture(gl.TEXTURE9);
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, t);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGB8, lm.width, lm.height, 3, 0, gl.RGB, gl.UNSIGNED_BYTE, null);
+      lm.bump.forEach((d, i) => gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, lm.width, lm.height, 1, gl.RGB, gl.UNSIGNED_BYTE, d));
+      gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.lmBTex = t;
+    }
     const t = gl.createTexture()!;
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, lm.width, lm.height, 0, gl.RED, gl.UNSIGNED_BYTE, lm.data);
+    if (lm.rgb) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, lm.width, lm.height, 0, gl.RGB, gl.UNSIGNED_BYTE, lm.data);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, lm.width, lm.height, 0, gl.RED, gl.UNSIGNED_BYTE, lm.data);
+    this.lmRgb = !!lm.rgb;
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -410,6 +507,68 @@ export class Renderer {
     this.lmScale = lm.scale ?? 1;
   }
   get hasLightmap(): boolean { return !!this.lmTex; }
+  /** Есть карты освещения рельефа (Source bump lightmaps). */
+  get hasBumpLightmap(): boolean { return !!this.lmBTex; }
+
+  private freeTargets(): void {
+    const gl = this.gl, T = this.fxT;
+    if (!T) return;
+    for (const f of [T.fbA, T.fbB, T.fbR]) gl.deleteFramebuffer(f);
+    for (const r of [T.rbColor, T.rbDepth, T.rbReflDepth]) gl.deleteRenderbuffer(r);
+    for (const t of [T.texColor, T.texDepth, T.texRefl]) gl.deleteTexture(t);
+    this.fxT = null;
+  }
+  /** Буферы под размер холста; false — не удалось (тогда вода рисуется полупрозрачным цветом). */
+  private targets(w: number, h: number): FxTargets | null {
+    if (this.fxFailed) return null;
+    if (this.fxT && this.fxT.w === w && this.fxT.h === h) return this.fxT;
+    this.freeTargets();
+    const gl = this.gl;
+    const tex = (iw: number, ih: number, fmt: number, f: number, type: number) => {
+      const t = gl.createTexture()!;
+      gl.activeTexture(gl.TEXTURE10);
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, fmt, iw, ih, 0, f, type, null);
+      const filt = f === gl.DEPTH_COMPONENT ? gl.NEAREST : gl.LINEAR;
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filt);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filt);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      return t;
+    };
+    const samples = Math.min(4, gl.getParameter(gl.MAX_SAMPLES) as number);
+    const rb = (fmt: number, iw: number, ih: number, ms: number) => {
+      const r = gl.createRenderbuffer()!;
+      gl.bindRenderbuffer(gl.RENDERBUFFER, r);
+      if (ms > 0) gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ms, fmt, iw, ih); else gl.renderbufferStorage(gl.RENDERBUFFER, fmt, iw, ih);
+      return r;
+    };
+    const rw = Math.max(1, w >> 1), rh = Math.max(1, h >> 1);
+    const T: FxTargets = {
+      w, h, rw, rh, fbA: gl.createFramebuffer()!, rbColor: rb(gl.RGBA8, w, h, samples), rbDepth: rb(gl.DEPTH_COMPONENT24, w, h, samples),
+      fbB: gl.createFramebuffer()!, texColor: tex(w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE), texDepth: tex(w, h, gl.DEPTH_COMPONENT24, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT),
+      fbR: gl.createFramebuffer()!, texRefl: tex(rw, rh, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE), rbReflDepth: rb(gl.DEPTH_COMPONENT24, rw, rh, 0),
+    };
+    let ok = true;
+    const check = () => { ok &&= gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE; };
+    gl.bindFramebuffer(gl.FRAMEBUFFER, T.fbA);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, T.rbColor);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, T.rbDepth);
+    check();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, T.fbB);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, T.texColor, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, T.texDepth, 0);
+    check();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, T.fbR);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, T.texRefl, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, T.rbReflDepth);
+    check();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.fxT = T;
+    if (!ok) { this.freeTargets(); this.fxFailed = true; return null; }
+    return T;
+  }
 
   private uploadR8(img: { width: number; height: number; data: Uint8Array }): WebGLTexture {
     const gl = this.gl, t = gl.createTexture()!;
@@ -625,23 +784,21 @@ export class Renderer {
     const gl = this.gl, c = this.canvas, dpr = globalThis.devicePixelRatio || 1, th = this.theme;
     const w = Math.max(1, Math.floor(c.clientWidth * dpr)), h = Math.max(1, Math.floor(c.clientHeight * dpr));
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-    gl.viewport(0, 0, w, h);
-    gl.clearColor(th.background[0], th.background[1], th.background[2], 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     const r = this.bounds.radius;
     // полёт: глаз внутри сцены — ближняя плоскость маленькая, дальняя — по размеру сцены
-    const proj = cam.mode === 'fly' ? perspective(1.0, w / h, Math.max(0.01, Math.min(0.1, r * 0.001)), r * 4 + 100) : perspective(0.8, w / h, Math.max(r * 0.01, cam.dist * 0.01), r * 100 + cam.dist * 2);
+    const near = cam.mode === 'fly' ? Math.max(0.01, Math.min(0.1, r * 0.001)) : Math.max(r * 0.01, cam.dist * 0.01), farP = cam.mode === 'fly' ? r * 4 + 100 : r * 100 + cam.dist * 2;
+    const proj = perspective(cam.mode === 'fly' ? 1.0 : 0.8, w / h, near, farP);
     const model = this.zUp ? mulCol(this.flip, ZUP) : this.flip;
     const mvG = mulCol(cam.view(), this.flip), mv = this.zUp ? mulCol(mvG, ZUP) : mvG;
     gl.enable(gl.DEPTH_TEST);
     gl.useProgram(this.p);
     gl.uniformMatrix4fv(this.U.proj!, false, proj);
-    gl.uniformMatrix4fv(this.U.mv!, false, mv);
     gl.uniformMatrix4fv(this.U.model!, false, model);
     this.lastPVM = mulCol(proj, mv);
+    const far = o.drawDistance && o.drawDistance > 0 ? o.drawDistance : Infinity;
     // отсечение: глаз в координатах модели — последний столбец обратной mv
-    const far = o.drawDistance && o.drawDistance > 0 ? o.drawDistance : Infinity, inv = invert(mv), pvm = this.lastPVM;
-    const eye = inv ? [inv[12]! / inv[15]!, inv[13]! / inv[15]!, inv[14]! / inv[15]!] : null;
+    const eyeOf = (m: Float32Array) => { const inv = invert(m); return inv ? [inv[12]! / inv[15]!, inv[13]! / inv[15]!, inv[14]! / inv[15]!] : null; };
+    const pvm = this.lastPVM, eye = eyeOf(mv);
     const stats = (this.drawStats = { tris: 0, calls: 0, cells: 0 }), ranges: number[] = [];
     gl.uniform1f(this.U.clipY!, o.clipY ?? 1e30);
     gl.uniform1i(this.U.bones!, 1);
@@ -649,14 +806,17 @@ export class Renderer {
     gl.uniform1i(this.U.norm!, 2);
     gl.uniform1i(this.U.surf!, 3);
     gl.uniform1f(this.U.normY!, this.normalY * (o.normalFlipY ? -1 : 1));
-    gl.uniform1f(this.U.mirror!, this.flipOn ? -1 : 1);
     gl.uniform1i(this.U.view!, typeof o.normalView === 'number' ? o.normalView : o.normalView ? 1 : 0);
     gl.uniform1f(this.U.ni!, o.normalStrength ?? 1);
     gl.uniform1i(this.U.skinned!, this.boneCount > 0 ? 1 : 0);
     gl.uniform1i(this.U.lm!, 4);
     gl.uniform1f(this.U.lmK!, this.lmScale * (o.lightmapScale ?? 1));
+    gl.uniform1i(this.U.lmRgb!, this.lmRgb ? 1 : 0);
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this.lmTex);
+    gl.uniform1i(this.U.lmB!, 9);
+    gl.activeTexture(gl.TEXTURE9);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.lmBTex);
     gl.uniform1i(this.U.tIdx!, 5);
     gl.uniform1i(this.U.tLay!, 6);
     gl.uniform2fv(this.U.tPar!, this.layPar);
@@ -676,12 +836,14 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.layMid);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.boneTex);
-    gl.enable(gl.POLYGON_OFFSET_FILL);
-    gl.polygonOffset(1, 1);
+    gl.uniform1i(this.U.refl!, 10);
+    gl.uniform1i(this.U.refr!, 11);
+    gl.uniform1i(this.U.depth!, 12);
+    gl.uniform1i(this.U.fx!, 0);
+    gl.uniform1i(this.U.clipOn!, 0);
     gl.uniform1i(this.U.flat!, 0);
     gl.uniform1f(this.U.flatAlpha!, 1);
-    // сначала непрозрачные, затем слои с прозрачностью по вершинам (наложение поверх, без записи глубины)
-    const drawMesh = (m: GpuMesh) => {
+    const drawMesh = (m: GpuMesh, pvmX: Float32Array, eyeX: number[] | null) => {
       gl.activeTexture(gl.TEXTURE0);
       const has = o.tex && m.tex;
       gl.bindTexture(gl.TEXTURE_2D, has ? m.tex : null);
@@ -697,7 +859,9 @@ export class Renderer {
       gl.bindTexture(gl.TEXTURE_2D, sf ? m.surf : null);
       gl.uniform1i(this.U.hasSurf!, sf ? 1 : 0);
       gl.uniform1i(this.U.alpha!, o.alpha || m.data.alphaTest ? 1 : 0);
-      gl.uniform1i(this.U.hasLm!, this.lmTex && m.data.uv2 && o.lightmap !== false ? 1 : 0);
+      const lmOn = !!(this.lmTex && m.data.uv2 && o.lightmap !== false);
+      gl.uniform1i(this.U.hasLm!, lmOn ? 1 : 0);
+      gl.uniform1i(this.U.hasLmB!, lmOn && this.lmBTex && o.bumpLightmap !== false ? 1 : 0);
       const terr = !!(has && m.tIdx && this.layTex && o.terrainLayers !== false);
       gl.uniform1i(this.U.terr!, terr ? 1 : 0);
       gl.activeTexture(gl.TEXTURE5);
@@ -705,7 +869,7 @@ export class Renderer {
       if (m.cells && m.vaoS) {
         gl.bindVertexArray(m.vaoS);
         if (m.sortDirty) { gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, m.cells.sorted); m.sortDirty = false; }
-        visibleRanges(m.cells, pvm, eye, far, ranges);
+        visibleRanges(m.cells, pvmX, eyeX, far, ranges);
         const bpe = m.idx.BYTES_PER_ELEMENT;
         for (let k = 0; k < ranges.length; k += 2) { gl.drawElements(gl.TRIANGLES, ranges[k + 1]!, m.itype, ranges[k]! * bpe); stats.tris += ranges[k + 1]! / 3; stats.calls++; }
         stats.cells += m.cells.start.length;
@@ -715,18 +879,102 @@ export class Renderer {
       gl.drawElements(gl.TRIANGLES, m.count, m.itype, 0);
       stats.tris += m.count / 3; stats.calls++;
     };
-    const seen = (m: GpuMesh) => m.visible && (!m.box || boxVisible(m.box, 0, pvm, eye, far));
-    for (const m of this.meshes) if (!m.bA && seen(m)) drawMesh(m);
-    gl.disable(gl.POLYGON_OFFSET_FILL);
-    if (this.meshes.some((m) => m.bA && seen(m))) {
+    const seenBy = (m: GpuMesh, pvmX: Float32Array, eyeX: number[] | null) => m.visible && (!m.box || boxVisible(m.box, 0, pvmX, eyeX, far));
+    const fxWanted = o.screenFx !== false;
+    const fxList = this.meshes.filter((m) => m.fx && seenBy(m, pvm, eye));
+    const T = fxWanted && fxList.length ? this.targets(w, h) : null;
+    /** Сцена без воды и стекла: сначала непрозрачные, затем слои с прозрачностью по вершинам; fallback — вода цветом поверх. */
+    const scene = (mvX: Float32Array, pvmX: Float32Array, eyeX: number[] | null, fallbackFx: boolean) => {
+      gl.uniformMatrix4fv(this.U.mv!, false, mvX);
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.polygonOffset(1, 1);
+      for (const m of this.meshes) if (!m.bA && !m.fx && seenBy(m, pvmX, eyeX)) drawMesh(m, pvmX, eyeX);
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+      const over = this.meshes.filter((m) => (m.bA || (fallbackFx && m.fx)) && seenBy(m, pvmX, eyeX));
+      if (!over.length) return;
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       gl.depthFunc(gl.LEQUAL);
       gl.depthMask(false);
-      for (const m of this.meshes) if (m.bA && seen(m)) drawMesh(m);
+      for (const m of over) {
+        // без буферов кадра: вода и стекло — полупрозрачный цвет (постоянная прозрачность вершин)
+        if (m.fx) gl.vertexAttrib4f(7, m.fx.fallback.opacity, 0, 0, 0);
+        drawMesh(m, pvmX, eyeX);
+        if (m.fx) gl.vertexAttrib4f(7, 1, 0, 0, 0);
+      }
       gl.depthMask(true);
       gl.depthFunc(gl.LESS);
       gl.disable(gl.BLEND);
+    };
+    const bg = () => { gl.clearColor(th.background[0], th.background[1], th.background[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); };
+    this.fxStats = { meshes: T ? fxList.length : 0, reflection: false };
+    // ---------- отражение: сцена, отражённая плоскостью ближайшей видимой воды (в половинном разрешении) ----------
+    let reflPlane: number[] | null = null;
+    if (T && eye) {
+      let best = Infinity;
+      for (const m of fxList) {
+        const pl = m.fx!.plane;
+        if (m.fx!.kind !== 'water' || !pl) continue;
+        const dist = Math.abs(pl[0] * eye[0]! + pl[1] * eye[1]! + pl[2] * eye[2]! - pl[3]);
+        if (dist < best) { best = dist; reflPlane = pl; }
+      }
+    }
+    if (T && reflPlane && eye) {
+      const [nx, ny, nz, d] = reflPlane as [number, number, number, number];
+      // отражение точки: p − 2(n·p − d)n (по столбцам)
+      const R = new Float32Array([1 - 2 * nx * nx, -2 * nx * ny, -2 * nx * nz, 0, -2 * ny * nx, 1 - 2 * ny * ny, -2 * ny * nz, 0, -2 * nz * nx, -2 * nz * ny, 1 - 2 * nz * nz, 0, 2 * d * nx, 2 * d * ny, 2 * d * nz, 1]);
+      const mvR = mulCol(mv, R), pvmR = mulCol(proj, mvR), eyeR = eyeOf(mvR), side = nx * eye[0]! + ny * eye[1]! + nz * eye[2]! - d >= 0 ? 1 : -1;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, T.fbR);
+      gl.viewport(0, 0, T.rw, T.rh);
+      bg();
+      gl.uniform1i(this.U.clipOn!, 1);
+      gl.uniform4f(this.U.clipPl!, nx * side, ny * side, nz * side, -d * side);
+      gl.uniform1f(this.U.mirror!, this.flipOn ? 1 : -1);
+      const saved = { ...stats };
+      scene(mvR, pvmR, eyeR, false);
+      Object.assign(stats, saved);
+      gl.uniform1i(this.U.clipOn!, 0);
+      this.fxStats.reflection = true;
+    }
+    gl.uniform1f(this.U.mirror!, this.flipOn ? -1 : 1);
+    // ---------- основная сцена: в промежуточный буфер (MSAA), если на кадре есть вода или стекло ----------
+    gl.bindFramebuffer(gl.FRAMEBUFFER, T ? T.fbA : null);
+    gl.viewport(0, 0, w, h);
+    bg();
+    scene(mv, pvm, eye, !T);
+    if (T) {
+      // снимок сцены с глубиной — то, что видно сквозь воду и стекло
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, T.fbA);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, T.fbB);
+      gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, T.fbA);
+      gl.activeTexture(gl.TEXTURE10);
+      gl.bindTexture(gl.TEXTURE_2D, this.fxStats.reflection ? T.texRefl : null);
+      gl.activeTexture(gl.TEXTURE11);
+      gl.bindTexture(gl.TEXTURE_2D, T.texColor);
+      gl.activeTexture(gl.TEXTURE12);
+      gl.bindTexture(gl.TEXTURE_2D, T.texDepth);
+      gl.uniform2f(this.U.screen!, w, h);
+      gl.uniform2f(this.U.nf!, near, farP);
+      gl.uniform1f(this.U.time!, (performance.now() / 1000) % 3600);
+      gl.uniformMatrix4fv(this.U.mv!, false, mv);
+      gl.depthFunc(gl.LEQUAL);
+      for (const m of fxList) {
+        const f = m.fx!, pl = f.plane;
+        const same = !!(reflPlane && pl && pl.every((v, k) => Math.abs(v - reflPlane![k]!) < (k === 3 ? 1 : 0.01)));
+        gl.uniform1i(this.U.fx!, f.kind === 'water' ? 1 : 2);
+        gl.uniform1i(this.U.fxRefl!, same ? 1 : 0);
+        gl.uniform3fv(this.U.fxRT!, f.refractTint);
+        gl.uniform3fv(this.U.fxLT!, f.reflectTint ?? (f.kind === 'glass' ? [0, 0, 0] : [1, 1, 1]));
+        gl.uniform4f(this.U.fxK!, f.refract, f.reflect ?? 0, f.fog?.start ?? 0, f.fog?.end ?? 1);
+        gl.uniform1i(this.U.fxFog!, f.fog ? 1 : 0);
+        gl.uniform3fv(this.U.fogC!, f.fog?.color ?? [0, 0, 0]);
+        gl.uniform2fv(this.U.fxScroll!, f.scroll ?? [0, 0]);
+        drawMesh(m, pvm, eye);
+      }
+      gl.uniform1i(this.U.fx!, 0);
+      gl.depthFunc(gl.LESS);
+      for (const u of [10, 11, 12]) { gl.activeTexture(gl.TEXTURE0 + u); gl.bindTexture(gl.TEXTURE_2D, null); }
     }
     if (o.wire) {
       gl.uniform1i(this.U.flat!, 1);
@@ -777,6 +1025,22 @@ export class Renderer {
       gl.uniform4fv(this.LU.color!, th.skeleton);
       gl.bindVertexArray(this.skelVao.vao);
       gl.drawArrays(gl.LINES, 0, this.skelN);
+    }
+    if (T) {
+      // готовый кадр: сведение MSAA в текстуру и вывод на холст
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, T.fbA);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, T.fbB);
+      gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.disable(gl.DEPTH_TEST);
+      gl.useProgram(this.qp);
+      gl.activeTexture(gl.TEXTURE11);
+      gl.bindTexture(gl.TEXTURE_2D, T.texColor);
+      gl.uniform1i(gl.getUniformLocation(this.qp, 'uT'), 11);
+      gl.bindVertexArray(this.qVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.enable(gl.DEPTH_TEST);
     }
     gl.bindVertexArray(null);
   }

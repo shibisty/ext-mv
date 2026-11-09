@@ -126,6 +126,27 @@ export interface Mesh {
    * карты (image) рисуются повторяющиеся текстуры слоёв, подкрашенные ею.
    */
   terrainIndex?: { width: number; height: number; data: Uint8Array };
+  /** Отражение и преломление по экрану (вода, преломляющее стекло Source): рисуется после сцены по её снимку. */
+  screenFx?: ScreenFx;
+}
+
+/** Параметры экранной поверхности: вода (плоское отражение, преломление, туман по глубине) или стекло (преломление). */
+export interface ScreenFx {
+  kind: 'water' | 'glass';
+  /** Плоскость поверхности в координатах модели: n·p = d (для отражения воды). */
+  plane?: [number, number, number, number];
+  /** Цвет преломления (то, что под водой / за стеклом) и отражения (у стекла — блик окружения $envmaptint), 0..1. */
+  refractTint: number[];
+  reflectTint?: number[];
+  /** Сила искажения по карте нормалей: доля экрана. */
+  refract: number;
+  reflect?: number;
+  /** Туман под водой: цвет 0..1, начало и конец в единицах модели. */
+  fog?: { color: number[]; start: number; end: number };
+  /** Сдвиг карты нормалей во времени (UV/сек). */
+  scroll?: [number, number];
+  /** Без поддержки: цвет и непрозрачность полупрозрачного слоя. */
+  fallback: { color: number[]; opacity: number };
 }
 
 /** Слои поверхности ландшафта: текстуры одного размера и параметры показа. */
@@ -155,10 +176,17 @@ export interface TerrainLayers {
 export interface Lightmap {
   width: number;
   height: number;
-  /** Яркость, 1 байт на пиксель. */
+  /** Яркость, 1 байт на пиксель (или RGB, 3 байта, при rgb). */
   data: Uint8Array;
+  /** Цветная карта (Source): RGB8. */
+  rgb?: boolean;
   /** Множитель яркости при показе. */
   scale?: number;
+  /**
+   * Карты освещения по трём направлениям базиса рельефа Source (bump lightmaps), тот же формат и раскладка, что data:
+   * свет смешивается по нормали из карты нормалей. У граней без рельефа — копия data.
+   */
+  bump?: [Uint8Array, Uint8Array, Uint8Array];
 }
 
 /** Ключи анимации assimp-стиля: [время, значение]. */
@@ -209,8 +237,22 @@ export interface NodeMotion extends MotionBase {
   layerPool?: NodeMotion[];
   /** Имена из layerPool, подобранные слоем по умолчанию. */
   layerAuto?: string[];
+  /**
+   * Смешивание анимаций по параметрам (последовательности Source: направление движения): сетка cols×rows анимаций
+   * (индекс — строка·cols + столбец), x/y — дробное положение; фаза общая — анимации разной длины идут в такт.
+   */
+  blend?: NodeBlend;
   /** Как класть эту анимацию слоем (кадр, маска) — задаёт движок. */
   asLayer?: (m: NodeMotion) => Omit<NodeLayer, 'motion'>;
+}
+export interface NodeBlend {
+  motions: NodeMotion[];
+  cols: number;
+  rows: number;
+  x: number;
+  y: number;
+  /** Параметры по осям (для подписи ползунка): имя и значения на краях сетки. */
+  params?: Array<{ name: string; start: number; end: number }>;
 }
 /** Анимация X-Ray (OGF/OMF): квантованные кватернионы + позиции по кадрам. */
 export interface XrayTrack {

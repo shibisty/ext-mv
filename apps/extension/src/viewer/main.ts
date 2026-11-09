@@ -1,7 +1,7 @@
 // Страница просмотрщика: стартовое окно выбора игры, верхняя панель инструментов, ресурсы слева, сцена/меши/анимации справа.
 import {
   autoLayers, XRAY_FX_PART, buildDiagnostics, createRegistry, engineTitle, presetText, tr, translatePlacement, instanceAt, rotatePlacement, sceneTree, ViewerSession,
-  type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Model, type Motion, type NodeLayer, type NodeMotion, type RayHit, type SceneNode,
+  type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Model, type Motion, type NodeBlend, type NodeLayer, type NodeMotion, type RayHit, type SceneNode,
 } from 'gmv';
 import { allEngines } from 'gmv/engines';
 import { configureAssimp } from 'gmv/engines/assimp';
@@ -297,12 +297,34 @@ function syncAim(): void {
   const g = viewer.aimGrid();
   $('aimRow').hidden = !g;
   if (!g) return;
+  const lx = $('aimRow').querySelector<HTMLElement>('[data-i="anim.aimX"]'), ly = $('aimRow').querySelector<HTMLElement>('[data-i="anim.aimY"]');
+  const yLabel = input('rngAimY').closest('label') as HTMLElement | null;
+  if (isBlend(g)) {
+    // смешивание анимаций: ползунок — параметр последовательности (направление движения и т. п.) от края до края
+    const val = (k: 0 | 1, pos: number, n: number) => { const p = g.params?.[k]; return p ? `${p.name} ${Math.round(p.start + (p.end - p.start) * (n > 1 ? pos / (n - 1) : 0))}` : ''; };
+    input('rngAimX').value = String(Math.round((g.cols > 1 ? g.x / (g.cols - 1) : 0) * 200 - 100));
+    input('rngAimY').value = String(Math.round((g.rows > 1 ? g.y / (g.rows - 1) : 0) * 200 - 100));
+    if (lx) lx.textContent = val(0, g.x, g.cols) || '↔';
+    if (ly) ly.textContent = val(1, g.y, g.rows) || '↕';
+    if (yLabel) yLabel.hidden = g.rows < 2;
+    return;
+  }
+  if (lx) lx.textContent = t('anim.aimX');
+  if (ly) ly.textContent = t('anim.aimY');
+  if (yLabel) yLabel.hidden = false;
   input('rngAimX').value = String(Math.round((1 - g.x) * 100));
   input('rngAimY').value = String(Math.round((g.y - 1) * 100));
 }
+const isBlend = (g: object): g is NodeBlend => 'motions' in g;
 const aimInput = () => {
   const g = viewer.aimGrid();
   if (!g) return;
+  if (isBlend(g)) {
+    g.x = ((+input('rngAimX').value + 100) / 200) * Math.max(0, g.cols - 1);
+    g.y = ((+input('rngAimY').value + 100) / 200) * Math.max(0, g.rows - 1);
+    syncAim();
+    return;
+  }
   g.x = Math.max(0, Math.min(g.cols - 1, 1 - +input('rngAimX').value / 100));
   g.y = Math.max(0, Math.min(g.rows - 1, 1 + +input('rngAimY').value / 100));
 };
@@ -378,11 +400,11 @@ const syncView = () => {
     tex: input('chkTex').checked, wire: input('chkWire').checked, skeleton: input('chkSkeleton').checked, grid: input('chkGrid').checked, alpha: input('chkAlpha').checked,
     normals: input('chkNormals').checked, normalFlipY: input('chkNormFlip').checked, pbr: input('chkPbr').checked,
     normalView: +select('selNormView').value as 0 | 1 | 2 | 3, normalStrength: +input('rngNI').value,
-    lightmap: input('chkLm').checked, lightmapScale: +input('rngLm').value,
+    lightmap: input('chkLm').checked, lightmapScale: +input('rngLm').value, screenFx: input('chkFx').checked,
   });
   $('lblLm').textContent = (+input('rngLm').value).toFixed(2);
 };
-for (const id of ['chkTex', 'chkWire', 'chkSkeleton', 'chkGrid', 'chkAlpha', 'chkNormals', 'chkNormFlip', 'chkPbr', 'chkLm']) input(id).onchange = syncView;
+for (const id of ['chkTex', 'chkWire', 'chkSkeleton', 'chkGrid', 'chkAlpha', 'chkNormals', 'chkNormFlip', 'chkPbr', 'chkLm', 'chkFx']) input(id).onchange = syncView;
 input('rngLm').oninput = syncView;
 select('selNormView').onchange = syncView;
 input('rngNI').oninput = () => { $('lblNI').textContent = (+input('rngNI').value).toFixed(2); syncView(); };

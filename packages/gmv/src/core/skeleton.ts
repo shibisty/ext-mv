@@ -1,6 +1,6 @@
 // Скелет из иерархии узлов (assimp, NIF, RenderWare, MD5, PSK, Cast, GoldSrc).
 import { compose, matToTRS, mulColInto, sampleQuat, sampleVec, type TRS } from './math';
-import type { Keys, Motion, SkeletonRuntime } from './types';
+import type { Keys, Motion, NodeMotion, SkeletonRuntime } from './types';
 
 export interface SkeletonNode {
   name: string;
@@ -80,13 +80,41 @@ export class NodeSkeleton implements SkeletonRuntime {
     };
     const tick = m ? tickOf(m) : 0;
     const layers = m?.layers?.length ? m.layers.map((l) => ({ l, tick: l.frame ?? tickOf(l.motion) })) : null;
+    // смешивание: до 4 соседних анимаций сетки с общей фазой
+    let taps: Array<{ mo: NodeMotion; w: number; tick: number }> | null = null;
+    if (m?.blend?.motions.length) {
+      const b = m.blend, cx = Math.max(0, Math.min(b.cols - 1, b.x)), cy = Math.max(0, Math.min(b.rows - 1, b.y));
+      const x0 = Math.floor(cx), y0 = Math.floor(cy), x1 = Math.min(b.cols - 1, x0 + 1), y1 = Math.min(b.rows - 1, y0 + 1), fx = cx - x0, fy = cy - y0;
+      const d = m.duration, phase = d > 0 ? (loop ? (((time % d) + d) % d) / d : Math.min(Math.max(time / d, 0), 1)) : 0;
+      taps = [];
+      for (const [i, w] of [[y0 * b.cols + x0, (1 - fx) * (1 - fy)], [y0 * b.cols + x1, fx * (1 - fy)], [y1 * b.cols + x0, (1 - fx) * fy], [y1 * b.cols + x1, fx * fy]] as Array<[number, number]>) {
+        const mo = b.motions[i];
+        if (!mo || w < 1e-6) continue;
+        const prev = taps.find((x) => x.mo === mo);
+        if (prev) prev.w += w; else taps.push({ mo, w, tick: phase * mo.duration * mo.tps });
+      }
+    }
     for (let i = 0; i < this.n; i++) {
       const nd = this.nodes[i]!, ch = m ? m.chan.get(i) : undefined, rest = this.rest[i]!;
       let L: ArrayLike<number> = nd.local;
-      if (ch || layers) {
+      if (ch || layers || taps) {
         let t: ArrayLike<number> = ch?.pos ? sampleVec(ch.pos, tick) : rest.t, q: ArrayLike<number> = ch?.rot ? sampleQuat(ch.rot, tick) : rest.q;
         const s = ch?.scl ? sampleVec(ch.scl, tick) : rest.s;
         let touched = !!ch;
+        if (taps) {
+          const tt = [0, 0, 0], qq = [0, 0, 0, 0];
+          let any = false, ref: ArrayLike<number> | null = null;
+          for (const { mo, w, tick: bt } of taps) {
+            const c = mo.chan.get(i);
+            if (c) any = true;
+            const p = c?.pos ? sampleVec(c.pos, bt) : rest.t, r = c?.rot ? sampleQuat(c.rot, bt) : rest.q;
+            for (let k = 0; k < 3; k++) tt[k] += p[k]! * w;
+            ref ??= r;
+            const sg = ref[0]! * r[0]! + ref[1]! * r[1]! + ref[2]! * r[2]! + ref[3]! * r[3]! < 0 ? -w : w;
+            for (let k = 0; k < 4; k++) qq[k] += r[k]! * sg;
+          }
+          if (any) { const n = Math.hypot(qq[0]!, qq[1]!, qq[2]!, qq[3]!) || 1; t = tt; q = qq.map((v) => v / n); touched = true; }
+        }
         if (layers) for (const { l, tick: lt } of layers) {
           const c = l.motion.chan.get(i);
           if (!c || (l.mask && !l.mask.has(i)) || (l.fill && ch)) continue;

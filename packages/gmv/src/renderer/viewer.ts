@@ -129,7 +129,7 @@ export class ModelViewer {
   /** Сетка прицела текущей анимации (первый слой с grid) или null. */
   aimGrid(): { cols: number; rows: number; x: number; y: number } | null {
     const m = this.state.motion;
-    return m && m.kind === 'node' ? m.layers?.find((l) => l.grid)?.grid ?? null : null;
+    return m && m.kind === 'node' ? m.blend ?? m.layers?.find((l) => l.grid)?.grid ?? null : null;
   }
 
   /** Выбрать анимацию (null — bind-поза) и начать проигрывание. */
