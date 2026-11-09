@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { openZip } from '../../../packages/gmv/src/index';
+import { openZip } from '@gmvjs/core';
 // @ts-expect-error — .mjs без типов
 import { crc32, zipDir } from '../scripts/zip.mjs';
 // @ts-expect-error — .mjs без типов

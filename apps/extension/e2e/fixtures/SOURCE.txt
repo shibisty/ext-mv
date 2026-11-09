@@ -1,0 +1,2 @@
+// Copy of `@gmvjs/test-utils` (synthetic test files, not published to npm) from the gmv repository: github.com/shibisty/gmv, packages/test-utils/src.
+// Update by copying the folder again when the library changes its test helpers.

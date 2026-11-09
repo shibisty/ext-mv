@@ -1,6 +1,6 @@
 // Слои сцены: дерево (геометрия, объекты по классам, меши), видимость галочками, выбор строки.
 // Дочерние строки создаются при раскрытии группы; длинные группы показываются порциями.
-import { sceneLeaves, type SceneNode } from 'gmv';
+import { sceneLeaves, type SceneNode } from '@gmvjs/core';
 import { t } from './i18n';
 
 const PAGE = 300;

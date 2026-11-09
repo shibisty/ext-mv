@@ -1,5 +1,5 @@
 // Окно экспорта: варианты выгрузки для открытой модели (из реестра: движки объявляют exporters), поля настроек варианта, запуск.
-import { exporterText, writeZip, type ExportContext, type ExportField, type ExporterPlugin, type ExportValues, type Model, type Registry } from 'gmv';
+import { exporterText, writeZip, type ExportContext, type ExportField, type ExporterPlugin, type ExportValues, type Model, type Registry } from '@gmvjs/core';
 
 import { t } from './i18n';
 

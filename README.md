@@ -1,15 +1,10 @@
 # Game Model Viewer v12
 
-[![Patreon](https://c5.patreon.com/external/logo/become_a_patron_button.png)](https://www.patreon.com/cw/shibisty)
-
 A WebGL viewer for game models, levels and archives, packaged as a Chrome/Firefox extension (Manifest V3). It reads the files straight from game folders and archives in the browser, with textures, skeletons and animations, and can export what it opens to other games and editors (for example, Metro 2033 maps to S.T.A.L.K.E.R. X-Ray SDK sources).
-
-![Example Map](_examples/image.png)
-![Example Map](_examples/image_2.png)
 
 The project has two parts:
 
-- **`packages/gmv`** — the library: a core with a plugin API, one module per engine, and a WebGL2 renderer. It can be reused in other projects ([packages/gmv/README.md](packages/gmv/README.md)).
+- **the gmv library** — its own repository, [github.com/shibisty/gmv](https://github.com/shibisty/gmv), published to npm as `@gmvjs/*` packages — the core `@gmvjs/core` with a plugin API, one package per engine with a subpath per game (`@gmvjs/xray-v1`, `@gmvjs/xray-v1/cop`, `@gmvjs/source1/vtmb`…), the WebGL2 renderer `@gmvjs/renderer`, and `@gmvjs/all` with every engine. See its README for the packages, tools (`smoke`, `peek`, export to X-Ray SDK) and how it was split out of this repository (`docs/SPLIT.md`).
 - **`apps/extension`** — the Chrome and Firefox extension.
 
 Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Detailed plan with per-format notes (in Russian): [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -83,14 +78,16 @@ Each engine declares its own export targets and settings; the export dialog show
 
 ## Build and install
 
-Node.js 20.19+ or 22.12+ is required.
+Node.js 20.19+ or 22.12+ is required. The library comes from npm (`@gmvjs/*`); its repository is not needed to build the extension.
 
 ```bash
-npm install
-npm run build      # library (packages/gmv/dist) and extension (apps/extension/dist)
-npm test           # unit tests (Vitest)
+npm install        # the extension's dependencies, including @gmvjs/* from npm
+npm run build      # the extension (apps/extension/dist)
+npm test           # extension tests (Vitest); library tests live in the gmv repository
 npm run check      # types + tests + build + web-ext lint for Firefox
 ```
+
+To try an unpublished library change, build the package in the gmv repository and install it from the folder: `npm i ../gmv/packages/<package>` (or `npm pack` + install the `.tgz`).
 
 Build output:
 
@@ -106,13 +103,12 @@ The assimp bridge (glTF, FBX, OBJ, DAE…) is built automatically: `assimpjs` co
 npm run dev                # rebuild on change -> apps/extension/dist/dev-chrome (load unpacked)
 npm run dev:firefox        # same for Firefox -> apps/extension/dist/dev-firefox
 npm run test:watch
-npm run smoke -- <folder or archives> [--limit 30]                 # check real game files: smoke-report.md
-npm run peek -- <folder or archives> --load <path> --ppm out.ppm   # one model: info, textures, image without a browser
-npx tsx tools/export-xray.ts <archives…> --load <path> --name <name> --out <file.zip>   # export to X-Ray SDK from the command line
+# library tools (smoke, peek, export to X-Ray SDK) live in the gmv repository: npm run smoke -- <folder or archives>
 npm run test:e2e   # Chromium + the built extension (Playwright). Chromium path: CHROMIUM_PATH
+# e2e/fixtures/ is a copy of the library's @gmvjs/test-utils (synthetic test files; not published to npm)
 ```
 
-On Windows, e2e tests need an installed Chromium or Chrome: `set CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe`.
+e2e tests need Playwright's Chromium matching the project's `playwright-core` (once, ~150 MB): `npm run test:e2e:install`. Do not use `npx playwright install` — it fetches the latest Playwright and downloads a Chromium build for that version instead. Branded Chrome 137+ ignores `--load-extension`, so pointing `CHROMIUM_PATH` at an installed Chrome does not work; use it only for a plain Chromium build.
 
 ## Using the viewer
 
@@ -124,7 +120,3 @@ On Windows, e2e tests need an installed Chromium or Chrome: `set CHROMIUM_PATH=C
 6. If loading fails, "Copy diagnostics" puts the format, signature and a hex dump of the header on the clipboard.
 
 Game assets and encryption keys are never bundled: the viewer works only with files you already have.
-
-[![Patreon](https://c5.patreon.com/external/logo/become_a_patron_button.png)](https://www.patreon.com/cw/shibisty)
-
-If this project helps you, consider supporting its development on Patreon ❤️

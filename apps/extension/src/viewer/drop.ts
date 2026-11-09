@@ -1,5 +1,5 @@
 // Перетаскивание: файлы и папки (рекурсивный обход через webkitGetAsEntry, путь сохраняется в webkitRelativePath).
-import type { BlobFile } from 'gmv';
+import type { BlobFile } from '@gmvjs/core';
 
 export interface DropResult {
   /** Отдельные файлы. */

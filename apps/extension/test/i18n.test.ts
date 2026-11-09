@@ -2,9 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createRegistry, exporterText, presetText, setLocale, tr } from '../../../packages/gmv/src/index';
-import { allEngines } from '../../../packages/gmv/src/engines/index';
-import { PRESETS_EN, EXPORTERS_EN } from '../../../packages/gmv/src/i18n/en';
+import { createRegistry, engineTitle, exporterText, presetText, setLocale, tr } from '@gmvjs/core';
+import { allEngines } from '@gmvjs/all';
 import { DICTS } from '../src/viewer/i18n';
 
 const root = resolve(__dirname, '..');
@@ -33,14 +32,18 @@ describe('языки интерфейса', () => {
 
   it('пресеты, группы и экспорт по-английски; библиотека переключает статусы и слои', () => {
     const reg = createRegistry(allEngines);
-    for (const id of Object.keys(PRESETS_EN)) expect(reg.game(id), id).toBeDefined();
-    for (const id of Object.keys(EXPORTERS_EN)) expect(reg.exporters.some((x) => x.id === id), id).toBe(true);
+    // тексты движка — только про его собственные пресеты и выгрузку
+    for (const e of reg.engines) {
+      for (const id of Object.keys(e.i18n?.en?.presets ?? {})) expect(e.games?.some((g) => g.id === id), `${e.id}: ${id}`).toBe(true);
+      for (const id of Object.keys(e.i18n?.en?.exporters ?? {})) expect(e.exporters?.some((x) => x.id === id), `${e.id}: ${id}`).toBe(true);
+    }
     setLocale('en');
     try {
       for (const g of reg.games) {
         const x = presetText(g);
         expect(`${x.title} ${x.hint} ${x.group} ${x.archiveLabel ?? ''} ${x.motionLabel ?? ''}`, g.id).not.toMatch(/[А-Яа-яЁё]/);
       }
+      for (const e of reg.engines) expect(engineTitle(e), e.id).not.toMatch(/[А-Яа-яЁё]/);
       for (const e of reg.exporters) {
         const x = exporterText(e);
         expect(`${x.title} ${x.description} ${e.fields.map((f) => Object.values(x.field(f)).join(' ')).join(' ')}`, e.id).not.toMatch(/[А-Яа-яЁё]/);

@@ -1,6 +1,6 @@
 // Язык интерфейса просмотрщика: русский и английский. Статичный текст страницы размечен атрибутами
 // data-i (текст), data-i-title, data-i-ph (placeholder), data-i-aria; динамический — через t().
-import { setLocale, type Locale } from 'gmv';
+import { setLocale, type Locale } from '@gmvjs/core';
 
 type Dict = Record<string, string>;
 

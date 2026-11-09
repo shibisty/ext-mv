@@ -1,5 +1,5 @@
 // Стартовое окно: карточки игр и форматов по группам, поиск; выбор пускает в просмотр.
-import { presetText, type GamePreset } from 'gmv';
+import { presetText, type GamePreset } from '@gmvjs/core';
 import { t } from './i18n';
 
 export interface StartScreen {

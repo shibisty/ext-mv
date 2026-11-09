@@ -1,14 +1,16 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["chrome", "node"],
-    "noEmit": true,
-    "paths": {
-      "gmv": ["../../packages/gmv/src/index.ts"],
-      "gmv/engines": ["../../packages/gmv/src/engines/index.ts"],
-      "gmv/engines/*": ["../../packages/gmv/src/engines/*/index.ts"],
-      "gmv/renderer": ["../../packages/gmv/src/renderer/index.ts"]
-    }
+    "types": [
+      "chrome",
+      "node"
+    ],
+    "noEmit": true
   },
-  "include": ["src", "e2e", "scripts", "vite.config.ts"]
+  "include": [
+    "src",
+    "e2e",
+    "scripts",
+    "vite.config.ts"
+  ]
 }

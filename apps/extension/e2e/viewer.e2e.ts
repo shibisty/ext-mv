@@ -6,14 +6,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { makeDdsArgb, makeDdsDxt1, makeMd2, makeOgf } from '../../../packages/gmv/test/helpers/fixtures';
-import { makePe, makeSocDb, makeXrayDb } from '../../../packages/gmv/test/helpers/xray';
-import { makeOdol, makePaaDxt1, makePbo, rapify } from '../../../packages/gmv/test/helpers/arma';
-import { makeYdr } from '../../../packages/gmv/test/helpers/rage';
-import { skinnedNif, turnKf } from '../../../packages/gmv/test/helpers/nif';
-import { makeZip } from '../../../packages/gmv/test/helpers/zip';
-import { cryFile, ident, mesh, mtl, node, tri } from '../../../packages/gmv/test/helpers/cry1';
-import { fv, makeFat, makeFcb, makeRml, makeTerrain, makeXbt } from '../../../packages/gmv/test/helpers/dunia';
+import { makeDdsArgb, makeDdsDxt1, makeMd2, makeOgf } from './fixtures/fixtures';
+import { makePe, makeSocDb, makeXrayDb } from './fixtures/xray';
+import { makeOdol, makePaaDxt1, makePbo, rapify } from './fixtures/arma';
+import { makeYdr } from './fixtures/rage';
+import { skinnedNif, turnKf } from './fixtures/nif';
+import { makeZip } from './fixtures/zip';
+import { cryFile, ident, mesh, mtl, node, tri } from './fixtures/cry1';
+import { fv, makeFat, makeFcb, makeRml, makeTerrain, makeXbt } from './fixtures/dunia';
 
 const ext = resolve(__dirname, '../dist/chrome');
 const tmp = mkdtempSync(join(tmpdir(), 'gmv-e2e-'));
@@ -28,6 +28,10 @@ beforeAll(async () => {
     headless: false,
     executablePath: process.env.CHROMIUM_PATH || (process.platform === 'linux' ? '/opt/pw-browsers/chromium' : undefined),
     args: ['--headless=new', `--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+  }).catch((e: Error) => {
+    // браузер должен быть той же сборки, что playwright-core проекта
+    if (/Executable doesn't exist/.test(e.message)) throw new Error('Нет Chromium для playwright-core этого проекта: выполните `npm run test:e2e:install` (не `npx playwright install` — он ставит браузер для другой версии Playwright).\n' + e.message);
+    throw e;
   });
   let [sw] = ctx.serviceWorkers();
   if (!sw) sw = await ctx.waitForEvent('serviceworker');

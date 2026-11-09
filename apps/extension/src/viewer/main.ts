@@ -1,11 +1,12 @@
 // Страница просмотрщика: стартовое окно выбора игры, верхняя панель инструментов, ресурсы слева, сцена/меши/анимации справа.
 import {
-  autoLayers, XRAY_FX_PART, buildDiagnostics, createRegistry, engineTitle, presetText, tr, translatePlacement, instanceAt, rotatePlacement, sceneTree, ViewerSession,
+  buildDiagnostics, createRegistry, engineTitle, presetText, tr, translatePlacement, instanceAt, rotatePlacement, sceneTree, ViewerSession,
   type ArchiveItem, type BlobFile, type DecodedImage, type ExportContext, type ExportTexture, type GamePreset, type Model, type Motion, type NodeBlend, type NodeLayer, type NodeMotion, type RayHit, type SceneNode,
-} from 'gmv';
-import { allEngines } from 'gmv/engines';
-import { configureAssimp } from 'gmv/engines/assimp';
-import { ModelViewer, type ViewerTool } from 'gmv/renderer';
+} from '@gmvjs/core';
+import { allEngines } from '@gmvjs/all';
+import { configureAssimp } from '@gmvjs/assimp';
+import { autoLayers, XRAY_FX_PART } from '@gmvjs/xray-v1';
+import { ModelViewer, type ViewerTool } from '@gmvjs/renderer';
 import { attachDrop } from './drop';
 import { createExportDialog } from './export-dialog';
 import { createLayers } from './layers';

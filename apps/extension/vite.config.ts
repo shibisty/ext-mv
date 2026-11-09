@@ -1,21 +1,11 @@
-// Сборка страниц расширения. Библиотека gmv берётся из исходников (packages/gmv/src) — отдельная сборка библиотеки не нужна.
+// Сборка страниц расширения. Пакеты @gmvjs/* — из npm.
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
-
-const lib = resolve(__dirname, '../../packages/gmv/src');
 
 export default defineConfig(({ mode }) => ({
   root: __dirname,
   base: './',
   publicDir: 'public',
-  resolve: {
-    alias: [
-      { find: /^gmv\/engines$/, replacement: resolve(lib, 'engines/index.ts') },
-      { find: /^gmv\/engines\/(.+)$/, replacement: resolve(lib, 'engines/$1/index.ts') },
-      { find: /^gmv\/renderer$/, replacement: resolve(lib, 'renderer/index.ts') },
-      { find: /^gmv$/, replacement: resolve(lib, 'index.ts') },
-    ],
-  },
   build: {
     outDir: process.env.GMV_OUT_DIR ?? 'dist/.build',
     emptyOutDir: true,

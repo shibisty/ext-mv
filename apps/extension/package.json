@@ -7,14 +7,21 @@
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "test:e2e": "node scripts/build.mjs && vitest run -c e2e/vitest.config.ts",
-    "lint:firefox": "web-ext lint --source-dir dist/firefox --self-hosted"
+    "lint:firefox": "web-ext lint --source-dir dist/firefox --self-hosted",
+    "e2e:install": "playwright-core install chromium"
   },
   "dependencies": {
-    "gmv": "*"
+    "@gmvjs/all": "^0.1.1",
+    "@gmvjs/assimp": "^0.1.1",
+    "@gmvjs/core": "^0.1.1",
+    "@gmvjs/renderer": "^0.1.1",
+    "@gmvjs/xray-v1": "^0.1.1"
   },
   "devDependencies": {
-    "playwright-core": "^1.56.0",
-    "web-ext": "^8.10.0",
-    "vitest": "^3.2.4"
+    "@gmvjs/rage": "^0.1.1",
+    "assimpjs": "0.0.10",
+    "playwright-core": "^1.64.1",
+    "vitest": "^3.2.4",
+    "web-ext": "^8.10.0"
   }
 }
