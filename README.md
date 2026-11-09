@@ -1,6 +1,11 @@
 # Game Model Viewer v12
 
+[![Patreon](https://c5.patreon.com/external/logo/become_a_patron_button.png)](https://www.patreon.com/cw/shibisty)
+
 A WebGL viewer for game models, levels and archives, packaged as a Chrome/Firefox extension (Manifest V3). It reads the files straight from game folders and archives in the browser, with textures, skeletons and animations, and can export what it opens to other games and editors (for example, Metro 2033 maps to S.T.A.L.K.E.R. X-Ray SDK sources).
+
+![Example Map](_examples/image.png)
+![Example Map](_examples/image_2.png)
 
 The project has two parts:
 
@@ -120,3 +125,7 @@ e2e tests need Playwright's Chromium matching the project's `playwright-core` (o
 6. If loading fails, "Copy diagnostics" puts the format, signature and a hex dump of the header on the clipboard.
 
 Game assets and encryption keys are never bundled: the viewer works only with files you already have.
+
+[![Patreon](https://c5.patreon.com/external/logo/become_a_patron_button.png)](https://www.patreon.com/cw/shibisty)
+
+If this project helps you, consider supporting its development on Patreon ❤️
