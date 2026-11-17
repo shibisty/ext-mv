@@ -1,0 +1,91 @@
+Game Model Viewer — View 3D game models, animations, textures, maps and game archives directly in your browser. Explore game assets and export them to Blender and other development tools.
+
+----------------------------------------------------------------
+
+Game Model Viewer — Explore Game Assets in Your Browser
+
+Turn your browser into a powerful 3D game asset viewer.
+
+Game Model Viewer lets you explore 3D models, characters, animations, textures, materials, maps and game archives directly from your local game files — without installing additional desktop software.
+
+Built for game developers, modders, 3D artists and enthusiasts who want to inspect, explore and reuse game assets.
+
+Key Features
+
+3D Models & Characters
+
+View static and skeletal 3D models.
+
+Explore model parts, meshes, materials and textures.
+
+Inspect skeletons, bones and skinning.
+
+Play skeletal and vertex animations.
+
+Control animation speed, playback and looping.
+
+Complete Game Levels
+
+Explore environments with terrain, buildings, vegetation and objects.
+
+Navigate large scenes using orbit and free-fly cameras.
+
+Inspect scene hierarchy and toggle individual layers.
+
+Select, move and rotate map objects.
+
+Game Archives & Resources
+
+Open game folders and supported archives directly.
+
+Browse resources and search through loaded files.
+
+Automatically detect supported games and file formats.
+
+Load related textures, materials, skeletons and animations.
+
+Textures & Materials
+
+View diffuse, normal, specular and PBR textures.
+
+Inspect roughness, metalness and ambient occlusion.
+
+Switch between textured, wireframe and skeleton views.
+
+Export & Interoperability
+
+Export models to OBJ with MTL materials and textures.
+
+Export supported maps and assets to S.T.A.L.K.E.R. X-Ray SDK format.
+
+Use exported assets in Blender, 3ds Max and other 3D tools.
+
+Three Ways to Work
+
+Popup — quick model inspection from the browser toolbar.
+
+Side Panel — convenient workspace for browsing and dropping game files.
+
+Full Viewer — complete workspace with scene hierarchy, animation controls and export tools.
+
+Your current session follows you between all three interfaces.
+
+Supported Games & Engines
+
+Native or partial support includes:
+
+S.T.A.L.K.E.R. (Shadow of Chernobyl, Clear Sky, Call of Pripyat), Metro 2033, F.E.A.R. Online, Survarium, Far Cry, Far Cry 2, Fallout 3, Fallout: New Vegas, Skyrim, GTA V, Arma 2, Arma 3, Arma Reforger, BeamNG.drive, MudRunner, SnowRunner, Quake, Doom 3, Half-Life, Counter-Strike, Vampire: The Masquerade – Bloodlines, Lineage II, Need for Speed: World and more.
+
+Additional formats are supported through the Assimp-based import bridge, including FBX, OBJ, DAE, 3DS, STL, PLY and others.
+
+Support varies by game, engine and asset type. See the project documentation for detailed compatibility information.
+
+Privacy & Local Files
+
+Game Model Viewer processes your selected game files locally in the browser. Game assets and encryption keys are not bundled with the extension. You must provide your own legally obtained game files.
+
+No game installation or additional desktop viewer is required.
+
+Built for Game Creators
+
+Whether you are inspecting a character's skeleton, exploring an entire game world, studying materials or preparing assets for another engine, Game Model Viewer brings your game resources into one convenient browser-based workspace.
