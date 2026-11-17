@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "Visualizador WebGL de modelos e mapas de jogos: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine e outros"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: vista rápida"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Abrir o visualizador completo num separador"
+  },
+  "menuSide": {
+    "message": "Abrir o painel lateral"
+  }
+}

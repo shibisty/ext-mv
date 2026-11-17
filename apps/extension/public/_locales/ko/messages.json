@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "게임 모델과 맵을 위한 WebGL 뷰어: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine 등"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: 빠른 보기"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "전체 뷰어를 탭에서 열기"
+  },
+  "menuSide": {
+    "message": "사이드 패널 열기"
+  }
+}

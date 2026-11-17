@@ -27,7 +27,7 @@ for (const t of TARGETS) {
   const manifest = buildManifest(root, t);
   writeFileSync(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
   const missing = stageFiles.filter((f) => !existsSync(join(out, f)) || statSync(join(out, f)).size !== statSync(join(stage, f)).size);
-  const refs = [manifest.background?.service_worker, ...(manifest.background?.scripts ?? []), ...Object.values(manifest.icons ?? {}), 'viewer.html'].filter(Boolean);
+  const refs = [manifest.background?.service_worker, ...(manifest.background?.scripts ?? []), ...Object.values(manifest.icons ?? {}), 'viewer.html', manifest.action?.default_popup, manifest.side_panel?.default_path, manifest.sidebar_action?.default_panel].filter(Boolean);
   const badRefs = refs.filter((r) => !existsSync(join(out, r)));
   if (missing.length || badRefs.length) {
     console.error(`[${t}] неполная сборка:`, { missing, badRefs });

@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "ゲームのモデルとマップの WebGL ビューアー：S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine など"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: クイックビュー"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "フルビューアーをタブで開く"
+  },
+  "menuSide": {
+    "message": "サイドパネルを開く"
+  }
+}

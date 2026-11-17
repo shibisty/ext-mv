@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "ಆಟದ ಮಾಡೆಲ್ ಮತ್ತು ನಕ್ಷೆಗಳ WebGL ವೀಕ್ಷಕ: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine ಮತ್ತು ಇನ್ನಷ್ಟು"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: ತ್ವರಿತ ವೀಕ್ಷಣೆ"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "ಪೂರ್ಣ ವೀಕ್ಷಕವನ್ನು ಟ್ಯಾಬ್‌ನಲ್ಲಿ ತೆರೆಯಿರಿ"
+  },
+  "menuSide": {
+    "message": "ಸೈಡ್ ಪ್ಯಾನೆಲ್ ತೆರೆಯಿರಿ"
+  }
+}

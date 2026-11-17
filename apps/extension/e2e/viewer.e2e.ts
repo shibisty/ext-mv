@@ -59,10 +59,10 @@ async function inView(fn: () => Promise<void>): Promise<void> {
   await page.keyboard.press('Escape');
 }
 /** Есть ли на холсте что-то кроме фона (декодируем скриншот прямо в странице). */
-async function drawnPixels(): Promise<number> {
-  await page.waitForTimeout(300);
-  const png = (await page.locator('#gl').screenshot()).toString('base64');
-  return page.evaluate(async (b64) => {
+async function drawnPixels(p: Page = page): Promise<number> {
+  await p.waitForTimeout(300);
+  const png = (await p.locator('#gl').screenshot()).toString('base64');
+  return p.evaluate(async (b64) => {
     const img = new Image();
     img.src = 'data:image/png;base64,' + b64;
     await img.decode();
@@ -338,6 +338,23 @@ describe('расширение в Chromium', () => {
     expect(errors).toEqual([]);
   });
 
+  it('52 языка: словарь подгружается по выбору, арабский — справа налево', async () => {
+    expect(await page.locator('#top select.lang option').count()).toBe(52);
+    await page.locator('#top select.lang').selectOption('de');
+    await expect.poll(() => page.locator('#btnFolder').textContent()).toBe('Spielordner…');
+    expect(await page.locator('html').getAttribute('lang')).toBe('de');
+    await page.locator('#top select.lang').selectOption('ar');
+    await expect.poll(() => page.locator('html').getAttribute('dir')).toBe('rtl');
+    expect(await page.locator('#btnFolder').textContent()).toBe('مجلد اللعبة…');
+    await page.screenshot({ path: resolve(__dirname, '../dist/e2e-ar.png') });
+    await page.locator('#top select.lang').selectOption('zh_TW');
+    await expect.poll(() => page.locator('#btnFolder').textContent()).toBe('遊戲資料夾…');
+    await page.locator('#top select.lang').selectOption('ru');
+    await expect.poll(() => page.locator('html').getAttribute('dir')).toBe('ltr');
+    expect(await page.locator('#btnFolder').textContent()).toBe('Папка игры…');
+    expect(errors).toEqual([]);
+  });
+
   it('«Папка игры»: полоса прогресса при выборе, индексация, список моделей', async () => {
     await chooseGame('quake2');
     const dir = join(tmp, 'q2game'), { mkdirSync } = await import('node:fs');
@@ -407,5 +424,125 @@ describe('расширение в Chromium', () => {
     await expect.poll(() => status().textContent()).toContain('Ошибка: Не MD2');
     expect(await page.locator('#btnDiag').isVisible()).toBe(true);
     errors.length = 0; // console.error от загрузчика ожидаем
+  });
+});
+
+describe('быстрый просмотр: попап и боковая панель', () => {
+  let mini: Page;
+  const miniErrors: string[] = [];
+  const open = async (file: 'popup.html' | 'sidebar.html', w: number, h: number) => {
+    mini = await ctx.newPage();
+    await mini.setViewportSize({ width: w, height: h });
+    mini.on('pageerror', (e) => miniErrors.push(e.message));
+    mini.on('console', (m) => { if (m.type() === 'error') miniErrors.push(m.text()); });
+    await mini.goto(`chrome-extension://${extId}/${file}`);
+  };
+
+  it('попап: пустое окно с подсказкой, открытие файлов кнопкой, модель крутится в окне', async () => {
+    await open('popup.html', 440, 540);
+    expect(await mini.locator('#empty').isVisible()).toBe(true);
+    expect(await mini.locator('#btnSide').isVisible()).toBe(true);
+    expect(await mini.locator('#viewHint').textContent()).toMatch(/side panel|боков/);
+    await expect.poll(() => mini.locator('#preset option').count()).toBeGreaterThan(30);
+    await mini.locator('#file').setInputFiles([put('pop.md2', makeMd2()), put('skin.dds', makeDdsDxt1(8, 8))]);
+    await expect.poll(() => mini.locator('#status').textContent()).toMatch(/(Загружено|Loaded): pop\.md2/);
+    await expect.poll(() => mini.locator('#empty').isVisible()).toBe(false);
+    // «Авто» по умолчанию: игра выбрана по файлу и видна в первом пункте
+    expect(await mini.locator('#preset').inputValue()).toBe('');
+    expect(await mini.locator('#preset option').first().textContent()).toMatch(/Quake II/);
+    expect(await mini.locator('#motion option').count()).toBe(2);
+    expect(await mini.locator('#list').isVisible()).toBe(false); // без архивов списка нет
+    const before = await drawnPixels(mini);
+    expect(before).toBeGreaterThan(100);
+    // вращение мышью: картинка меняется
+    const shot = async () => (await mini.locator('#gl').screenshot()).toString('base64');
+    const a = await shot();
+    const box = (await mini.locator('#gl').boundingBox())!;
+    await mini.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await mini.mouse.down();
+    await mini.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2 + 20, { steps: 5 });
+    await mini.mouse.up();
+    await mini.waitForTimeout(200);
+    expect(await shot()).not.toBe(a);
+    await mini.screenshot({ path: resolve(__dirname, '../dist/e2e-popup.png') });
+    expect(miniErrors).toEqual([]);
+  });
+
+  it('из попапа в полный просмотрщик: открытые файлы переезжают во вкладку', async () => {
+    const [tab] = await Promise.all([ctx.waitForEvent('page'), mini.locator('#btnFull').click()]);
+    await tab.waitForLoadState();
+    await expect.poll(() => tab.locator('#status').textContent()).toMatch(/(Загружено|Loaded): pop\.md2/);
+    expect(await tab.locator('#app').isVisible()).toBe(true);
+    expect(await tab.locator('#btnGame').getAttribute('data-preset')).toBe('quake2');
+    expect(new URL(tab.url()).search).toBe('');
+    await tab.close();
+    if (!mini.isClosed()) await mini.close();
+  });
+
+  it('боковая панель: перетаскивание папки с несколькими моделями, список, выбор модели', async () => {
+    await open('sidebar.html', 360, 720);
+    expect(await mini.locator('#btnSide').isVisible()).toBe(false);
+    expect(await mini.locator('#viewHint').textContent()).toBe('');
+    // drop: файлы с путями внутри «папки» (как webkitRelativePath после обхода)
+    const md2 = Buffer.from(makeMd2()).toString('base64');
+    await mini.evaluate(async (b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const dt = new DataTransfer();
+      for (const n of ['a.md2', 'b.md2']) dt.items.add(new File([bytes], n));
+      for (const type of ['dragenter', 'dragover', 'drop']) window.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, md2);
+    await expect.poll(() => mini.locator('#status').textContent()).toMatch(/(Загружено|Loaded): [ab]\.md2/);
+    expect(await drawnPixels(mini)).toBeGreaterThan(100);
+    // архив с двумя моделями: список с поиском
+    const zip = makeZip({ 'models/one.md2': new Uint8Array(makeMd2()), 'models/two.md2': new Uint8Array(makeMd2()) });
+    await mini.locator('#file').setInputFiles(put('pack.zip', zip.slice().buffer));
+    await expect.poll(() => mini.locator('#listSel option').count()).toBe(2);
+    expect(await mini.locator('#list').isVisible()).toBe(true);
+    await mini.locator('#listFilter').fill('two');
+    expect(await mini.locator('#listSel option').count()).toBe(1);
+    expect(await mini.locator('#listInfo').textContent()).toMatch(/: 1$/);
+    await mini.locator('#listSel').selectOption('0');
+    await expect.poll(() => mini.locator('#status').textContent()).toMatch(/(Загружено|Loaded): two\.md2/);
+    await mini.screenshot({ path: resolve(__dirname, '../dist/e2e-sidebar.png') });
+    expect(miniErrors).toEqual([]);
+    await mini.close();
+  });
+
+  it('попап открывается снова с тем же: модель из архива, список', async () => {
+    await open('popup.html', 440, 540);
+    await expect.poll(() => mini.locator('#status').textContent()).toMatch(/(Загружено|Loaded): two\.md2/);
+    expect(await mini.locator('#empty').isVisible()).toBe(false);
+    await expect.poll(() => mini.locator('#listSel option').count()).toBeGreaterThanOrEqual(2);
+    expect(miniErrors).toEqual([]);
+  });
+
+  it('«Авто»: NIF подходит двум играм — «Читать как» переключает и перечитывает', async () => {
+    await mini.locator('#file').setInputFiles(put('body.nif', skinnedNif()));
+    await expect.poll(() => mini.locator('#status').textContent()).toMatch(/(Загружено|Loaded): body\.nif/);
+    await expect.poll(() => mini.locator('#readAs button').count()).toBe(2);
+    expect(await mini.locator('#readAs button.on').getAttribute('data-preset')).toBe('fo3');
+    await mini.locator('#readAs button[data-preset="fnv"]').click();
+    await expect.poll(() => mini.locator('#readAs button.on').getAttribute('data-preset')).toBe('fnv');
+    expect(await mini.locator('#status').textContent()).toMatch(/(Загружено|Loaded): body\.nif/);
+    expect(await mini.locator('#preset').inputValue()).toBe('');
+    expect(await drawnPixels(mini)).toBeGreaterThan(100);
+    await mini.screenshot({ path: resolve(__dirname, '../dist/e2e-readas.png') });
+    expect(miniErrors).toEqual([]);
+  });
+
+  it('попап -> боковая панель: открытое продолжается; ✕ начинает заново', async () => {
+    await mini.close();
+    await open('sidebar.html', 360, 720);
+    await expect.poll(() => mini.locator('#status').textContent()).toMatch(/(Загружено|Loaded): body\.nif/);
+    await expect.poll(() => mini.locator('#readAs button.on').getAttribute('data-preset')).toBe('fnv');
+    await mini.locator('#btnClear').click();
+    await mini.waitForLoadState();
+    await expect.poll(() => mini.locator('#empty').isVisible()).toBe(true);
+    expect(await mini.locator('#resume').isVisible()).toBe(false);
+    await mini.reload();
+    await mini.waitForTimeout(300);
+    expect(await mini.locator('#empty').isVisible()).toBe(true);
+    expect(miniErrors).toEqual([]);
+    await mini.close();
   });
 });

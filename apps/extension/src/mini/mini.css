@@ -1,0 +1,50 @@
+/* Быстрый просмотр: попап (фиксированный размер) и боковая панель (по размеру панели). Цвета — как у полного просмотрщика. */
+:root{
+  color-scheme:dark;
+  --bg:#1e2227;--panel:#262b32;--border:#3a414a;--text:#d8dde3;--muted:#8a94a0;
+  --btn:#3a424c;--btn-hover:#46505c;--btn-border:#4a535e;--accent:#2f6fb5;--accent-border:#3d84d0;
+  --status:#9fb0c0;--err:#ff8080;--drop:#2f6fb5aa;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif}
+body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+body[data-view="popup"]{width:440px;height:540px}
+
+.bar{display:flex;gap:4px;padding:6px;background:var(--panel);border-bottom:1px solid var(--border)}
+.bar select{flex:1;min-width:0}
+select,input,button{font:inherit;color:var(--text);background:var(--btn);border:1px solid var(--btn-border);border-radius:4px;padding:3px 6px}
+button{cursor:pointer;min-width:30px}
+button:hover{background:var(--btn-hover)}
+button.primary{background:var(--accent);border-color:var(--accent-border)}
+button[hidden],select[hidden],#list[hidden]{display:none}
+
+/* «Читать как»: файл подходит нескольким играм — переключатели */
+.readas{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:4px 6px;background:var(--panel);border-bottom:1px solid var(--border);font-size:12px}
+.readas[hidden]{display:none}
+.readas span{color:var(--muted);margin-right:2px}
+.readas button{padding:1px 8px;border-radius:10px;font-size:12px}
+.readas button.on{background:var(--accent);border-color:var(--accent-border)}
+#empty .resume{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#stage{position:relative;flex:1;min-height:0}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+#empty{position:absolute;inset:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;
+  border:2px dashed var(--border);border-radius:8px;padding:16px;color:var(--muted)}
+#empty b{color:var(--text);font-size:15px}
+#empty .note:empty{display:none}
+#empty .note{color:#e0b070}
+body.loaded #empty{display:none}
+.fit{position:absolute;right:8px;top:8px;opacity:.85}
+#drop{display:none;position:absolute;inset:0;background:var(--drop);align-items:center;justify-content:center;font-size:18px;z-index:5;pointer-events:none}
+#drop.on{display:flex}
+
+#list{display:flex;flex-direction:column;gap:4px;padding:6px;border-top:1px solid var(--border);background:var(--panel)}
+#list .row{display:flex;gap:6px;align-items:center}
+#list input{flex:1;min-width:0}
+#list small{color:var(--muted);white-space:nowrap}
+#listSel{width:100%;max-height:30vh}
+body[data-view="popup"] #listSel{height:88px}
+
+footer{display:flex;gap:6px;align-items:center;padding:4px 6px;background:var(--panel);border-top:1px solid var(--border);min-height:28px}
+footer select{max-width:45%}
+.status{flex:1;min-width:0;color:var(--status);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status.err{color:var(--err);white-space:normal}

@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "WebGL преглед на модели и карти от игри: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine и други"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: бърз преглед"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Отваряне на пълния преглед в раздел"
+  },
+  "menuSide": {
+    "message": "Отваряне на страничния панел"
+  }
+}

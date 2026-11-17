@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "గేమ్ మోడల్‌లు, మ్యాప్‌ల కోసం WebGL వ్యూయర్: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine మరియు మరిన్ని"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: త్వరిత వీక్షణ"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "పూర్తి వ్యూయర్‌ను ట్యాబ్‌లో తెరవండి"
+  },
+  "menuSide": {
+    "message": "సైడ్ ప్యానెల్ తెరవండి"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "የጨዋታ ሞዴሎችና ካርታዎች WebGL መመልከቻ፦ S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine እና ሌሎችም"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: ፈጣን እይታ"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "ሙሉ መመልከቻውን በትር ክፈት"
+  },
+  "menuSide": {
+    "message": "የጎን ፓነል ክፈት"
+  }
+}

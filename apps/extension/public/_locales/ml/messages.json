@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "ഗെയിം മോഡലുകളുടെയും മാപ്പുകളുടെയും WebGL വ്യൂവർ: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine തുടങ്ങിയവ"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: ദ്രുത കാഴ്ച"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "പൂർണ്ണ വ്യൂവർ ടാബിൽ തുറക്കുക"
+  },
+  "menuSide": {
+    "message": "സൈഡ് പാനൽ തുറക്കുക"
+  }
+}

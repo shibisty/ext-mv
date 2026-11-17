@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "WebGL-fremviser til spilmodeller og -kort: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine med flere"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: hurtig visning"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Åbn den fulde visning i en fane"
+  },
+  "menuSide": {
+    "message": "Åbn sidepanelet"
+  }
+}

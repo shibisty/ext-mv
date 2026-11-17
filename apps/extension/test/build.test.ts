@@ -38,6 +38,19 @@ describe('манифесты', () => {
     expect(m.browser_specific_settings).toBeUndefined();
     expect(m.content_security_policy.extension_pages).toContain("'wasm-unsafe-eval'");
   });
+  it('попап на значке, боковая панель: Chrome — side_panel, Firefox — sidebar_action', () => {
+    const c = buildManifest(root, 'chrome'), f = buildManifest(root, 'firefox');
+    for (const m of [c, f]) {
+      expect(m.action.default_popup).toBe('popup.html');
+      expect(m.permissions).toContain('contextMenus');
+    }
+    expect(c.side_panel).toEqual({ default_path: 'sidebar.html' });
+    expect(c.permissions).toContain('sidePanel');
+    expect(c.sidebar_action).toBeUndefined();
+    expect(f.sidebar_action.default_panel).toBe('sidebar.html');
+    expect(f.side_panel).toBeUndefined();
+    expect(f.permissions).not.toContain('sidePanel');
+  });
   it('Firefox: фоновые скрипты, id, минимальная версия, декларация сбора данных', () => {
     const m = buildManifest(root, 'firefox');
     expect(m.background).toEqual({ scripts: ['background.js'] });

@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "WebGL-katselin pelien malleille ja kartoille: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine ja muut"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: pikanäkymä"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Avaa täysi katselu välilehdessä"
+  },
+  "menuSide": {
+    "message": "Avaa sivupaneeli"
+  }
+}

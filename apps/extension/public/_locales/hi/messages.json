@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "गेम मॉडल और मैप के लिए WebGL व्यूअर: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine और भी"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: त्वरित व्यू"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "पूरा व्यूअर टैब में खोलें"
+  },
+  "menuSide": {
+    "message": "साइड पैनल खोलें"
+  }
+}

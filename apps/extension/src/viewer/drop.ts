@@ -6,7 +6,14 @@ export interface DropResult {
   files: File[];
   /** Содержимое брошенных папок (одна запись на папку). */
   folders: BlobFile[][];
+  /**
+   * Дескрипторы брошенного (File System Access, только Chromium): по ним файлы и папки открываются снова
+   * в другой странице расширения без копирования. Пусто, если браузер их не даёт.
+   */
+  handles: FileSystemHandle[];
 }
+
+type HandleItem = DataTransferItem & { getAsFileSystemHandle?(): Promise<FileSystemHandle | null> };
 
 const withPath = (f: File, path: string): BlobFile => {
   try { Object.defineProperty(f, 'webkitRelativePath', { value: path, configurable: true }); } catch { /* только чтение — оставим имя */ }
@@ -34,15 +41,19 @@ async function walk(entry: FileSystemEntry, prefix: string, out: BlobFile[], onC
 /** onCount — сколько файлов уже найдено (обход большой папки идёт долго). */
 export async function readDrop(dt: DataTransfer, onCount?: (n: number) => void): Promise<DropResult> {
   const files: File[] = [], folders: BlobFile[][] = [];
-  const entries = Array.from(dt.items ?? [])
-    .filter((i) => i.kind === 'file')
-    .map((i) => (typeof i.webkitGetAsEntry === 'function' ? i.webkitGetAsEntry() : null));
-  if (!entries.length || entries.some((e) => !e)) return { files: Array.from(dt.files), folders };
+  const items = Array.from(dt.items ?? []).filter((i) => i.kind === 'file') as HandleItem[];
+  // всё, что читает DataTransfer, — синхронно, до первого await: после обработчика drop элементы пустеют
+  const handleJobs = items.map((i) => (typeof i.getAsFileSystemHandle === 'function' ? i.getAsFileSystemHandle().catch(() => null) : Promise.resolve(null)));
+  const entries = items.map((i) => (typeof i.webkitGetAsEntry === 'function' ? i.webkitGetAsEntry() : null));
+  const plain = Array.from(dt.files);
+  const found = await Promise.all(handleJobs);
+  const handles = found.every(Boolean) ? (found as FileSystemHandle[]) : [];
+  if (!entries.length || entries.some((e) => !e)) return { files: plain, folders, handles };
   for (const e of entries as FileSystemEntry[]) {
     if (e.isDirectory) { const list: BlobFile[] = []; onCount?.(0); await walk(e, '', list, onCount); folders.push(list); }
     else files.push(await new Promise<File>((ok, fail) => (e as FileSystemFileEntry).file(ok, fail)));
   }
-  return { files, folders };
+  return { files, folders, handles };
 }
 
 /** Подписать окно на перетаскивание с подсветкой зоны. */

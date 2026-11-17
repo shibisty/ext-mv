@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "ตัวแสดงผล WebGL สำหรับโมเดลและแผนที่เกม: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine และอื่นๆ"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: ดูอย่างรวดเร็ว"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "เปิดตัวแสดงผลแบบเต็มในแท็บ"
+  },
+  "menuSide": {
+    "message": "เปิดแผงด้านข้าง"
+  }
+}

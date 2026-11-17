@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "Penampil WebGL untuk model dan peta game: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine dan lainnya"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: tampilan cepat"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Buka penampil lengkap di tab"
+  },
+  "menuSide": {
+    "message": "Buka panel samping"
+  }
+}

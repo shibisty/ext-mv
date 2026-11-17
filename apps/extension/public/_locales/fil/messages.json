@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "WebGL viewer ng mga modelo at mapa ng laro: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine at iba pa"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: mabilisang tingin"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Buksan ang buong viewer sa tab"
+  },
+  "menuSide": {
+    "message": "Buksan ang side panel"
+  }
+}

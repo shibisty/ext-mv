@@ -1,8 +1,9 @@
-// Язык интерфейса просмотрщика: русский и английский. Статичный текст страницы размечен атрибутами
-// data-i (текст), data-i-title, data-i-ph (placeholder), data-i-aria; динамический — через t().
-import { setLocale, type Locale } from '@gmvjs/core';
+// Язык интерфейса: английский (эталон) и русский — здесь, остальные языки — locales/<код>.json, загружаются по требованию.
+// Статичный текст страницы размечен атрибутами data-i (текст), data-i-title, data-i-ph (placeholder), data-i-aria;
+// динамический — через t(). Библиотека (@gmvjs/core: игры, статусы сессии) знает только ru и en: для остальных языков — en.
+import { setLocale } from '@gmvjs/core';
 
-type Dict = Record<string, string>;
+export type Dict = Record<string, string>;
 
 const RU: Dict = {
   'start.back': 'Назад к просмотру ▸', 'start.back.t': 'Вернуться к просмотру без смены игры (Esc)',
@@ -50,6 +51,21 @@ const RU: Dict = {
   'exp.title': 'Экспорт', 'exp.close': 'Закрыть', 'exp.targets': 'Куда выгрузить', 'exp.run': 'Экспортировать', 'exp.from': 'из: {src}', 'exp.rec': 'для этой игры',
   'exp.running': 'Экспорт…', 'exp.statusRunning': 'Экспорт: {title}…', 'exp.done': 'Готово: {n} файлов, {mb} МБ — {name}.zip', 'exp.statusDone': 'Экспорт готов: {name}.zip',
   'exp.error': 'Ошибка: {error}', 'exp.statusError': 'Ошибка экспорта: {error}', 'exp.noModel': 'Сначала загрузите модель или уровень', 'exp.none': 'Для этой модели вариантов выгрузки пока нет.',
+  // быстрый просмотр: попап и боковая панель
+  'mini.preset.t': 'Игра или формат: подсказывает, как читать файл, если расширение одинаковое у разных игр',
+  'mini.open': 'Открыть файлы…', 'mini.open.t': 'Открыть модель, карту, текстуры, анимации или архивы',
+  'mini.side.t': 'Открыть в боковой панели: туда удобно перетаскивать файлы', 'mini.full.t': 'Открыть в полном просмотрщике (вкладка): слои, анимации, экспорт',
+  'mini.drop': 'Перетащите сюда модель, карту или папку игры', 'mini.popup.head': 'Откройте модель, карту или архив игры',
+  'mini.drop.hint': 'Можно сразу несколько файлов: модель с текстурами и анимациями. ЛКМ — вращение, колесо — масштаб, ПКМ — сдвиг.',
+  'mini.popup.hint': 'Попап закрывается, когда переключаешься в проводник, поэтому здесь файлы открываются кнопкой. Перетаскивать — в боковую панель.',
+  'mini.ff.hint': 'В Firefox окно выбора файла закрывает попап — откройте файлы в боковой панели.',
+  'mini.filter': 'Поиск модели', 'mini.found': 'моделей: {n}', 'mini.foundMore': 'моделей: {n}, показаны первые {k}',
+  'mini.side.na': 'Боковая панель недоступна в этом браузере',
+  'mini.auto': 'Авто — по файлу', 'mini.autoNow': 'Авто: {title}',
+  'mini.readAs': 'Читать как:', 'mini.readAs.t': 'Файл подходит нескольким играм или форматам — выберите, как его читать',
+  'mini.clear.t': 'Закрыть всё и начать заново',
+  'mini.resume': 'Продолжить: {names}', 'mini.access': 'Разрешить доступ и продолжить: {names}', 'mini.accessDenied': 'Доступ к файлам не дан — откройте их снова',
+  'mini.restoring': 'Открываю снова: {names}…', 'mini.restoreFailed': 'Не удалось открыть снова: {error}',
 };
 
 const EN: Dict = {
@@ -98,17 +114,58 @@ const EN: Dict = {
   'exp.title': 'Export', 'exp.close': 'Close', 'exp.targets': 'Export target', 'exp.run': 'Export', 'exp.from': 'from: {src}', 'exp.rec': 'for this game',
   'exp.running': 'Exporting…', 'exp.statusRunning': 'Export: {title}…', 'exp.done': 'Done: {n} files, {mb} MB — {name}.zip', 'exp.statusDone': 'Export ready: {name}.zip',
   'exp.error': 'Error: {error}', 'exp.statusError': 'Export error: {error}', 'exp.noModel': 'Load a model or level first', 'exp.none': 'No export targets for this model yet.',
+  'mini.preset.t': 'Game or format: tells how to read a file when different games share an extension',
+  'mini.open': 'Open files…', 'mini.open.t': 'Open a model, a map, textures, animations or archives',
+  'mini.side.t': 'Open in the side panel: easy to drop files there', 'mini.full.t': 'Open in the full viewer (tab): layers, animations, export',
+  'mini.drop': 'Drop a model, a map or a game folder here', 'mini.popup.head': 'Open a model, a map or a game archive',
+  'mini.drop.hint': 'Several files at once work too: a model with its textures and animations. Left drag — rotate, wheel — zoom, right drag — pan.',
+  'mini.popup.hint': 'The popup closes when you switch to the file manager, so here files are opened with the button. To drag and drop, use the side panel.',
+  'mini.ff.hint': 'In Firefox the file dialog closes the popup — open files in the side panel.',
+  'mini.filter': 'Find a model', 'mini.found': 'models: {n}', 'mini.foundMore': 'models: {n}, first {k} shown',
+  'mini.side.na': 'The side panel is not available in this browser',
+  'mini.auto': 'Auto — by file', 'mini.autoNow': 'Auto: {title}',
+  'mini.readAs': 'Read as:', 'mini.readAs.t': 'The file fits several games or formats — choose how to read it',
+  'mini.clear.t': 'Close everything and start over',
+  'mini.resume': 'Continue: {names}', 'mini.access': 'Allow access and continue: {names}', 'mini.accessDenied': 'No access to the files — open them again',
+  'mini.restoring': 'Reopening: {names}…', 'mini.restoreFailed': 'Could not reopen: {error}',
 };
 
-export const DICTS: Record<Locale, Dict> = { ru: RU, en: EN };
-let lang: Locale = 'ru';
+/** Языки интерфейса: код (как в _locales, en_* — один английский) и самоназвание. */
+export const LANGS: ReadonlyArray<readonly [code: string, name: string]> = [
+  ['en', 'English'], ['ar', 'العربية'], ['am', 'አማርኛ'], ['bg', 'Български'], ['bn', 'বাংলা'], ['ca', 'Català'], ['cs', 'Čeština'],
+  ['da', 'Dansk'], ['de', 'Deutsch'], ['el', 'Ελληνικά'], ['es', 'Español'], ['es_419', 'Español (Latinoamérica)'], ['et', 'Eesti'],
+  ['fa', 'فارسی'], ['fi', 'Suomi'], ['fil', 'Filipino'], ['fr', 'Français'], ['gu', 'ગુજરાતી'], ['he', 'עברית'], ['hi', 'हिन्दी'],
+  ['hr', 'Hrvatski'], ['hu', 'Magyar'], ['id', 'Bahasa Indonesia'], ['it', 'Italiano'], ['ja', '日本語'], ['kn', 'ಕನ್ನಡ'], ['ko', '한국어'],
+  ['lt', 'Lietuvių'], ['lv', 'Latviešu'], ['ml', 'മലയാളം'], ['mr', 'मराठी'], ['ms', 'Bahasa Melayu'], ['nl', 'Nederlands'], ['no', 'Norsk'],
+  ['pl', 'Polski'], ['pt_BR', 'Português (Brasil)'], ['pt_PT', 'Português (Portugal)'], ['ro', 'Română'], ['ru', 'Русский'], ['sk', 'Slovenčina'],
+  ['sl', 'Slovenščina'], ['sr', 'Српски'], ['sv', 'Svenska'], ['sw', 'Kiswahili'], ['ta', 'தமிழ்'], ['te', 'తెలుగు'], ['th', 'ไทย'],
+  ['tr', 'Türkçe'], ['uk', 'Українська'], ['vi', 'Tiếng Việt'], ['zh_CN', '简体中文'], ['zh_TW', '繁體中文'],
+];
+const CODES = new Set(LANGS.map(([c]) => c));
+/** Языки, написанные справа налево. */
+const RTL = new Set(['ar', 'fa', 'he']);
+
+export const DICTS: Record<string, Dict> = { ru: RU, en: EN };
+const loaders = import.meta.glob<Dict>('./locales/*.json', { import: 'default' });
+let lang = 'en';
 const listeners: Array<() => void> = [];
 
-export const getLang = (): Locale => lang;
+export const getLang = (): string => lang;
 
 export function t(key: string, params: Record<string, string | number> = {}): string {
-  const s = DICTS[lang][key] ?? RU[key] ?? key;
+  const s = DICTS[lang]?.[key] ?? EN[key] ?? key;
   return s.replace(/\{(\w+)\}/g, (_, k: string) => (params[k] !== undefined ? String(params[k]) : `{${k}}`));
+}
+
+/** Заполнить переключатели языка (select.lang) списком LANGS. */
+function fillLangSelects(): void {
+  document.querySelectorAll<HTMLSelectElement>('select.lang').forEach((s) => {
+    if (s.options.length !== LANGS.length) {
+      s.textContent = '';
+      for (const [code, name] of LANGS) { const o = document.createElement('option'); o.value = code; o.textContent = name; s.append(o); }
+    }
+    s.value = lang;
+  });
 }
 
 /** Перевести размеченный статичный текст внутри root. */
@@ -117,22 +174,50 @@ export function applyDom(root: ParentNode = document): void {
   root.querySelectorAll<HTMLElement>('[data-i-title]').forEach((el) => { el.title = t(el.dataset.iTitle!); });
   root.querySelectorAll<HTMLInputElement>('[data-i-ph]').forEach((el) => { el.placeholder = t(el.dataset.iPh!); });
   root.querySelectorAll<HTMLElement>('[data-i-aria]').forEach((el) => { el.setAttribute('aria-label', t(el.dataset.iAria!)); });
-  document.documentElement.lang = lang;
-  document.querySelectorAll<HTMLSelectElement>('select.lang').forEach((s) => { s.value = lang; });
+  document.documentElement.lang = lang.replace('_', '-');
+  document.documentElement.dir = RTL.has(lang) ? 'rtl' : 'ltr';
+  fillLangSelects();
 }
 
-/** Сменить язык: библиотека, разметка страницы, подписчики (перерисовка динамических частей). */
-export function setLang(l: Locale): void {
-  lang = l;
-  setLocale(l);
+async function loadDict(l: string): Promise<void> {
+  if (DICTS[l]) return;
+  const load = loaders[`./locales/${l}.json`];
+  if (load) DICTS[l] = await load();
+}
+
+/** Сменить язык: словарь (подгружается), библиотека, разметка страницы, подписчики (перерисовка динамических частей). */
+export async function setLang(l: string): Promise<void> {
+  const next = CODES.has(l) ? l : 'en';
+  await loadDict(next).catch(() => undefined);
+  lang = DICTS[next] ? next : 'en';
+  setLocale(lang === 'ru' ? 'ru' : 'en');
   applyDom();
   for (const fn of listeners) fn();
 }
 export const onLangChange = (fn: () => void): void => { listeners.push(fn); };
 
-/** Язык по умолчанию: сохранённый выбор, иначе язык браузера (русский/украинский/белорусский — русский, остальные — английский). */
-export function detectLang(saved: string | null): Locale {
-  if (saved === 'ru' || saved === 'en') return saved;
-  const nav = (globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? 'en').toLowerCase();
-  return /^(ru|uk|be)\b/.test(nav) ? 'ru' : 'en';
+/**
+ * Язык браузера (BCP 47: «pt-BR», «zh-Hant-TW», «es-419») -> код из LANGS; нет такого — en.
+ * Старые коды iw/in/tl -> he/id/fil, норвежские nb/nn -> no.
+ */
+export function matchBrowserLang(raw: string): string {
+  const parts = raw.replace(/_/g, '-').split('-').filter(Boolean);
+  let base = (parts[0] ?? 'en').toLowerCase();
+  base = ({ iw: 'he', in: 'id', tl: 'fil', nb: 'no', nn: 'no' } as Record<string, string>)[base] ?? base;
+  const rest = parts.slice(1).map((p) => p.toLowerCase());
+  const region = rest.find((p) => /^([a-z]{2}|\d{3})$/.test(p))?.toUpperCase();
+  if (region && CODES.has(`${base}_${region}`)) return `${base}_${region}`;
+  if (base === 'zh') return rest.includes('hant') || ['TW', 'HK', 'MO'].includes(region ?? '') ? 'zh_TW' : 'zh_CN';
+  if (base === 'pt') return region === 'PT' ? 'pt_PT' : 'pt_BR';
+  if (base === 'es') return region && region !== 'ES' ? 'es_419' : 'es';
+  return CODES.has(base) ? base : 'en';
 }
+
+/** Язык по умолчанию: сохранённый выбор, иначе язык браузера. */
+export function detectLang(saved: string | null): string {
+  if (saved && CODES.has(saved)) return saved;
+  return matchBrowserLang(globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? 'en');
+}
+
+/** Выбрать язык при запуске страницы (до построения интерфейса). */
+export const initLang = (saved: string | null): Promise<void> => setLang(detectLang(saved));

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Game Model Viewer</title>
+<meta name="color-scheme" content="dark">
+<style>html,body{background:#1e2227}</style>
+<link rel="stylesheet" href="./src/mini/mini.css">
+</head>
+<!-- быстрый просмотр: та же страница в попапе и в боковой панели (src/mini/main.ts), различается data-view -->
+<body data-view="popup">
+<header class="bar">
+  <select id="preset" data-i-title="mini.preset.t" data-i-aria="mini.preset.t"></select>
+  <button id="btnOpen" data-i-title="mini.open.t" data-i-aria="mini.open.t">📂</button>
+  <button id="btnSide" data-i-title="mini.side.t" data-i-aria="mini.side.t">◨</button>
+  <button id="btnFull" data-i-title="mini.full.t" data-i-aria="mini.full.t">⧉</button>
+  <button id="btnClear" data-i-title="mini.clear.t" data-i-aria="mini.clear.t" hidden>✕</button>
+</header>
+<div id="readAs" class="readas" data-i-title="mini.readAs.t" hidden></div>
+<main id="stage">
+  <canvas id="gl"></canvas>
+  <div id="empty">
+    <b data-i="mini.popup.head">Откройте модель, карту или архив игры</b>
+    <small data-i="mini.drop.hint"></small>
+    <small id="viewHint" class="note"></small>
+    <button id="btnOpen2" class="primary" data-i="mini.open">Открыть файлы…</button>
+    <button id="resume" class="resume" hidden></button>
+  </div>
+  <button id="btnFit" class="fit" data-i-title="cam.fit.t" data-i-aria="cam.fit.t" hidden>⤢</button>
+  <div id="drop" data-i="drop">Отпустите файлы или папку</div>
+</main>
+<section id="list" hidden>
+  <div class="row"><input id="listFilter" type="search" data-i-ph="mini.filter" autocomplete="off"><small id="listInfo"></small></div>
+  <select id="listSel" size="5"></select>
+</section>
+<footer>
+  <select id="motion" hidden></select>
+  <span id="status" class="status"></span>
+</footer>
+<input type="file" id="file" multiple hidden>
+<script type="module" src="./src/mini/main.ts"></script>
+</body>
+</html>

@@ -4,6 +4,8 @@
 
 A WebGL viewer for game models, levels and archives, packaged as a Chrome/Firefox extension (Manifest V3). It reads the files straight from game folders and archives in the browser, with textures, skeletons and animations, and can export what it opens to other games and editors (for example, Metro 2033 maps to S.T.A.L.K.E.R. X-Ray SDK sources).
 
+Three ways to open it: a **popup** on the toolbar icon for a quick look, a **side panel** to drop files into while you browse, and the **full viewer** in a tab with layers, animations and export. Whatever you opened follows you from one to the other. The interface is available in 52 languages.
+
 ![Example Map](_examples/image.png)
 ![Example Map](_examples/image_2.png)
 
@@ -70,6 +72,7 @@ Each engine declares its own export targets and settings; the export dialog show
 | Feature | Status | Notes |
 |---|---|---|
 | Start screen with game/format search; auto-detection by file signature | ✅ | Opening a file from another game switches the game automatically |
+| Automatic game choice in the quick view (“Auto — by file”) | ✅ | The file is matched against every engine by extension and signature, the most confident reader wins. When several games or formats fit (Fallout 3 / New Vegas NIF, Unreal 1–5 PSK, MD2 natively or through assimp), a “Read as” row lets you switch, and the file is reread at once. Picking a game from the list turns Auto off |
 | Game folders, archives, drag and drop, resource search | ✅ | Archives: BSA, PAK/PK3/PK4, VPK, IMG, VIV/BIG, PBO, ZIP, X-Ray `.db`, Metro `content.vfi`, F.E.A.R. Online `.arch01`, Survarium `resources.*.db`, Far Cry 2 `.fat` + `.dat`, Far Cry `.pak`, Unreal Engine 2 packages (Lineage II, decrypted), Enfusion `.pak` (Arma Reforger); for F.E.A.R. Online, Survarium, Far Cry 2 and S.T.A.L.K.E.R. Clear Sky / Call of Pripyat the archives inside a chosen game folder open automatically (Clear Sky: 34 `.db` in 1.5 s, 3 182 models); a progress bar shows folder listing, indexing (hundreds of thousands of files, the page stays responsive), archive opening and model loading; when several archives are selected at once, files that cannot be read (not an archive, damaged) are skipped and listed in the status line, the rest open |
 | Scene layers: level geometry and objects grouped by class, visibility toggles | ✅ | Hidden items are not exported; service geometry (unplaced F.E.A.R. Online WorldModels, empty-slot pieces, light planes, Survarium light and particle markers) starts hidden; Survarium grass is a separate mesh group («Трава · …») that can be hidden in one click |
 | Select objects by clicking in the scene, move and rotate map objects | 🟡 | Undo and saving scene edits — planned; moved objects are exported with their new poses |
@@ -77,8 +80,10 @@ Each engine declares its own export targets and settings; the export dialog show
 | Textures, normal maps, PBR (roughness/metalness/AO), wireframe, skeleton | ✅ | Normal and PBR maps found from materials or by file name |
 | Skeletal and vertex animation playback | ✅ | Speed, loop, scrubbing |
 | Error diagnostics (format, signature, hex dump to clipboard) | ✅ | |
-| Interface in English and Russian, switchable on the fly | 🟡 | Default follows the browser language; model details and format error messages are still Russian only |
-| Popup and side panel, light theme | ⬜ | |
+| Interface in 52 languages, switchable on the fly | 🟡 | The default follows the browser language (pt-BR / pt-PT, es / es-419, zh-CN / zh-TW and RTL Arabic, Hebrew, Persian included); the store listing has 55 locales. Game names, format hints and session messages come from the library, which knows English and Russian only, so other languages show them in English; model details and format error messages are still Russian only. Translations other than English and Russian were not reviewed by native speakers |
+| Quick view: popup and side panel | ✅ | Open or drop files and rotate the model or map in a small window, pick an animation, choose a model from a dropped folder or archive. The popup closes when focus leaves it, so dropping files works in the side panel; in Firefox the file dialog closes the popup too, so there “Open” leads to the side panel |
+| Opened resources survive switching popup → side panel → tab | ✅ | Kept in the extension's IndexedDB: in Chromium as file and folder handles (nothing is copied; the browser may ask to confirm access again), elsewhere as file copies up to 64 MB in total. Reopening the popup brings back the last model; a big game folder is reopened on a click. ✕ closes everything and starts over |
+| Light theme | ⬜ | |
 | Large open levels (5–10 M triangles) | 🟡 | Work but are heavy. Level geometry is merged per material in one pass with no bone/weight data for static meshes; models use their near LOD only (Survarium: by the model's own LOD list); Survarium grass uses its far LOD and is thinned out above 1.5 M triangles. Splitting levels into chunks with view culling — planned |
 
 ## Build and install
@@ -117,12 +122,19 @@ e2e tests need Playwright's Chromium matching the project's `playwright-core` (o
 
 ## Using the viewer
 
+0. **Quick view.** The toolbar icon opens a popup: open a model, map or archive and rotate it right there (left drag — rotate, wheel — zoom, right drag — pan).
+   - The game list starts at **Auto — by file**: the game is picked from the file itself. If the file fits several games or formats, choose another one in the **Read as** row under the toolbar.
+   - **◨** moves to the side panel: drop files or a whole game folder into it; a folder or archive with several models gives a list with search.
+   - **⧉** opens the full viewer in a tab with the same files and model; **✕** closes everything.
+   - What you opened stays: reopen the popup, switch to the side panel or the tab and you continue where you left off. If the browser forgot its permission for the files, the viewer shows “Allow access and continue”.
+   - Right-click the icon for “Open full viewer in a tab” and “Open side panel”.
 1. Pick a game or format on the start screen (search is available), or drop model files or a game folder onto the window. Switch the game later with the game button at the top left.
 2. **Left panel — resources:** game folder, archives, single models and textures, search across everything opened. Assembled models are listed too: BeamNG `.pc` configurations, Arma `config/…/*.armacfg` classes, MudRunner/SnowRunner `classes/trucks/*.xml` trucks. For F.E.A.R. Online, Survarium and Far Cry 2 choose the whole game folder: the archives inside open by themselves (Far Cry 2 models are `graphics/…/*.xbg`; F.E.A.R. Online levels are the `Game/worlds/…/*.wld` files; Survarium character outfits are `*.outfit`, levels `*.vlevel` entries in the resource list; on a Survarium level, light and particle markers are turned on in "Meshes and textures" → «Метки · …»).
 3. **Right panel:** "Scene" (layers with visibility checkboxes; double-click focuses the camera), "Meshes and textures" (pick any texture manually with "…"), "Animation".
 4. **Top bar:** tools "Camera", "Select" (V), "Move" (G: drag along the floor, Ctrl — up/down) and "Rotate" (R, or ⟲/⟳ 90°), camera "Orbit"/"Fly" (WASD, E/Q up/down, Shift faster), the "View" menu, "Info" and "Export…". F focuses the selection, Esc clears it.
 5. **Export…** lists where the opened model can go, with settings for each target.
 6. If loading fails, "Copy diagnostics" puts the format, signature and a hex dump of the header on the clipboard.
+7. **Language:** the selector on the start screen and in the top bar lists 52 languages by their own names; the quick view follows the same choice.
 
 Game assets and encryption keys are never bundled: the viewer works only with files you already have.
 

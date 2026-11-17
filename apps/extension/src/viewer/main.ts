@@ -8,10 +8,11 @@ import { configureAssimp } from '@gmvjs/assimp';
 import { autoLayers, XRAY_FX_PART } from '@gmvjs/xray-v1';
 import { ModelViewer, type ViewerTool } from '@gmvjs/renderer';
 import { attachDrop } from './drop';
+import { loadWorkspace, needsAccess, requestAccess, restoreInto, sourceName, type Workspace } from '../shared/workspace';
 import { createExportDialog } from './export-dialog';
 import { createLayers } from './layers';
 import { createStartScreen } from './start';
-import { applyDom, detectLang, onLangChange, setLang, t } from './i18n';
+import { applyDom, initLang, onLangChange, setLang, t } from './i18n';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -26,7 +27,7 @@ const PREF_KEY = 'fmt';
 const prefGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
 const prefSet = (k: string, v: string): void => { try { localStorage.setItem(k, v); } catch { /* приватный режим */ } };
 // язык — до создания интерфейса: статусы сессии и названия пресетов берутся на нём
-setLang(detectLang(prefGet('lang')));
+await initLang(prefGet('lang'));
 const appVersion = (() => { try { return chrome.runtime.getManifest().version; } catch { return ''; } })();
 
 function setStatus(text: string, err = false): void {
@@ -696,7 +697,7 @@ button('btnExport').onclick = () => exportDialog.open();
 
 // ---------- язык ----------
 document.querySelectorAll<HTMLSelectElement>('select.lang').forEach((sel) => {
-  sel.onchange = () => { prefSet('lang', sel.value); setLang(sel.value === 'en' ? 'en' : 'ru'); };
+  sel.onchange = () => { prefSet('lang', sel.value); void setLang(sel.value); };
 });
 onLangChange(() => {
   applyPreset(session.preset);
@@ -726,4 +727,25 @@ applyClip();
 applyPreset(session.preset);
 setTool('camera');
 viewer.start();
-start.show(prefGet(PREF_KEY));
+// ресурсы, открытые в быстром просмотре (попап, боковая панель): сразу в просмотр, без стартового окна
+async function restoreWorkspace(w: Workspace): Promise<void> {
+  button('btnResume').hidden = true;
+  enterViewer();
+  try { await restoreInto(session, w, (n) => showProgress({ text: t('progress.walk', { n }) })); }
+  catch (e) { setStatus(t('mini.restoreFailed', { error: (e as Error).message }), true); }
+}
+const handoff = new URLSearchParams(location.search).has('handoff') ? await loadWorkspace().catch(() => null) : null;
+if (handoff) {
+  history.replaceState(null, '', location.pathname);
+  if (await needsAccess(handoff).catch(() => true)) {
+    // браузер забыл разрешение на файлы — вернуть его можно только по щелчку
+    enterViewer();
+    const b = button('btnResume');
+    b.textContent = t('mini.access', { names: handoff.sources.map(sourceName).slice(0, 3).join(', ') });
+    b.hidden = false;
+    b.onclick = async () => {
+      if (await requestAccess(handoff).catch(() => false)) await restoreWorkspace(handoff);
+      else setStatus(t('mini.accessDenied'), true);
+    };
+  } else await restoreWorkspace(handoff);
+} else start.show(prefGet(PREF_KEY));

@@ -1,5 +1,20 @@
 {
-  "appName": { "message": "Game Model Viewer" },
-  "appDesc": { "message": "WebGL viewer for game models and levels: S.T.A.L.K.E.R. (X-Ray), Metro 2033 (4A), Bethesda, GTA, Arma, id Tech, Valve, Unreal, CoD, CryEngine and more; export to X-Ray SDK and OBJ." },
-  "actionTitle": { "message": "Open Game Model Viewer" }
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "WebGL viewer for game models and maps: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine and more"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: quick view"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Open full viewer in a tab"
+  },
+  "menuSide": {
+    "message": "Open side panel"
+  }
 }

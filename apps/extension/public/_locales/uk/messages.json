@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "WebGL-переглядач моделей і карт ігор: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine та ін."
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: швидкий перегляд"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Відкрити повний переглядач у вкладці"
+  },
+  "menuSide": {
+    "message": "Відкрити бічну панель"
+  }
+}

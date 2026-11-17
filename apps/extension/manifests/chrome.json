@@ -1,4 +1,13 @@
 {
   "minimum_chrome_version": "116",
-  "background": { "service_worker": "background.js" }
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "contextMenus",
+    "sidePanel"
+  ],
+  "side_panel": {
+    "default_path": "sidebar.html"
+  }
 }

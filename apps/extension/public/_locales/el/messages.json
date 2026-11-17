@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "Προβολή WebGL μοντέλων και χαρτών παιχνιδιών: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine και άλλα"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: γρήγορη προβολή"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Άνοιγμα πλήρους προβολής σε καρτέλα"
+  },
+  "menuSide": {
+    "message": "Άνοιγμα πλαϊνού πάνελ"
+  }
+}

@@ -3,7 +3,8 @@
   "compilerOptions": {
     "types": [
       "chrome",
-      "node"
+      "node",
+      "vite/client"
     ],
     "noEmit": true
   },

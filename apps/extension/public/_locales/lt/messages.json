@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "Žaidimų modelių ir žemėlapių WebGL peržiūra: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine ir kt."
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: greita peržiūra"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "Atidaryti visą peržiūrą skirtuke"
+  },
+  "menuSide": {
+    "message": "Atidaryti šoninį skydelį"
+  }
+}

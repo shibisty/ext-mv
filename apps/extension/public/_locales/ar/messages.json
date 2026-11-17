@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "عارض WebGL لنماذج وخرائط الألعاب: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine وغيرها"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: عرض سريع"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "فتح العارض الكامل في علامة تبويب"
+  },
+  "menuSide": {
+    "message": "فتح اللوحة الجانبية"
+  }
+}

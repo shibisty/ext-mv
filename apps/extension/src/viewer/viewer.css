@@ -118,3 +118,6 @@ dialog::backdrop{background:#0009}
 .dlg-side label .hint{display:block;margin-top:2px}
 .dlg-side label.cb{display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap}
 #expReport{margin-top:10px;padding:8px;background:var(--bg);border-radius:4px;max-height:200px;overflow:auto}
+
+/* переключатель языка: 52 языка с самоназваниями — в верхней панели узкий */
+#top select.lang{max-width:9em}

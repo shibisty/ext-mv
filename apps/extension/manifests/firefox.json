@@ -1,10 +1,27 @@
 {
-  "background": { "scripts": ["background.js"] },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "game-model-viewer@ext-mv",
       "strict_min_version": "115.0",
-      "data_collection_permissions": { "required": ["none"] }
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
+  },
+  "sidebar_action": {
+    "default_panel": "sidebar.html",
+    "default_title": "__MSG_sidebarTitle__",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png"
+    },
+    "open_at_install": false
   }
 }

@@ -1,0 +1,20 @@
+{
+  "appName": {
+    "message": "Game Model Viewer"
+  },
+  "appDesc": {
+    "message": "கேம் மாடல்கள், வரைபடங்களுக்கான WebGL பார்வையாளர்: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine மற்றும் பல"
+  },
+  "actionTitle": {
+    "message": "Game Model Viewer: விரைவுக் காட்சி"
+  },
+  "sidebarTitle": {
+    "message": "Game Model Viewer"
+  },
+  "menuFull": {
+    "message": "முழுப் பார்வையாளரைத் தாவலில் திற"
+  },
+  "menuSide": {
+    "message": "பக்கப் பலகத்தைத் திற"
+  }
+}
