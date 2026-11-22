@@ -3,7 +3,7 @@
     "message": "Game Model Viewer"
   },
   "appDesc": {
-    "message": "WebGL-visning av spillmodeller og kart: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine med flere"
+    "message": "WebGL-visning av spillmodeller og kart."
   },
   "actionTitle": {
     "message": "Game Model Viewer: hurtigvisning"

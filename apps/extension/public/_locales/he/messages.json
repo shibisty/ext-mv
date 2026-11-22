@@ -3,7 +3,7 @@
     "message": "Game Model Viewer"
   },
   "appDesc": {
-    "message": "מציג WebGL למודלים ומפות של משחקים: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine ועוד"
+    "message": "מציג WebGL למודלים ומפות של משחקים."
   },
   "actionTitle": {
     "message": "Game Model Viewer: תצוגה מהירה"

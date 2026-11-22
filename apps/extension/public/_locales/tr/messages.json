@@ -3,7 +3,7 @@
     "message": "Game Model Viewer"
   },
   "appDesc": {
-    "message": "Oyun modeli ve haritaları için WebGL görüntüleyici: S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine vb."
+    "message": "Oyun modeli ve haritaları için WebGL görüntüleyici."
   },
   "actionTitle": {
     "message": "Game Model Viewer: hızlı görünüm"

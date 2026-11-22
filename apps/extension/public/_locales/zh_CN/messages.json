@@ -3,7 +3,7 @@
     "message": "Game Model Viewer"
   },
   "appDesc": {
-    "message": "游戏模型与地图的 WebGL 查看器：S.T.A.L.K.E.R., Metro, Bethesda, GTA, Arma, Valve, Unreal, CryEngine 等"
+    "message": "游戏模型与地图的 WebGL 查看器。"
   },
   "actionTitle": {
     "message": "Game Model Viewer: 快速查看"
